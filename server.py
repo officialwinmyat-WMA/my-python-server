@@ -5,7 +5,8 @@ from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, send, emit
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+# Render တွင် eventlet ဖြင့် အလုပ်လုပ်ရန် async_mode='eventlet' ထည့်ပေးခြင်း
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # Database ဖန်တီးခြင်း (စာသားများကို ၇ ရက်စာ သိမ်းရန်)
 def init_db():
