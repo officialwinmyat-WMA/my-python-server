@@ -1,56 +1,68 @@
-import socket
-import threading
+import os
+import sqlite3
+from datetime import datetime, timedelta
+from flask import Flask, request, jsonify
+from flask_socketio import SocketIO, send, emit
 
-# Server ချိန်ညှိချက်များ
-HOST = '0.0.0.0'
-PORT = 5000
+app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-# ချိတ်ဆက်လာသမျှ client များကို မှတ်သားရန် list
-clients = []
-clients_lock = threading.Lock()
+# Database ဖန်တီးခြင်း (စာသားများကို ၇ ရက်စာ သိမ်းရန်)
+def init_db():
+    conn = sqlite3.connect('messages.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message TEXT,
+            timestamp DATETIME
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
-def handle_client(conn, addr):
-    print(f"[+] ချိတ်ဆက်လာသူ: {addr}")
-    with clients_lock:
-        clients.append(conn)
-        
-    try:
-        while True:
-            # Data ကို လက်ခံခြင်း (အရွယ်အစား 4096 bytes)
-            data = conn.recv(4096)
-            if not data:
-                break
-            
-            # လက်ခံရရှိတဲ့ data ကို ချိတ်ဆက်ထားသမျှ client အားလုံးဆီသို့ ဖြန့်ဝေပေးခြင်း (Broadcast)
-            with clients_lock:
-                for client in clients:
-                    if client != conn:  *# ပို့လိုက်တဲ့သူဆီ ပြန်မပို့ဘဲ ကျန်တဲ့သူတွေဆီ ပို့ရန်*
-                        try:
-                            client.sendall(data)
-                        except:
-                            pass
-    except Exception as e:
-        print(f"[-] အမှားအယွင်းရှိသည် {addr}: {e}")
-    finally:
-        with clients_lock:
-            if conn in clients:
-                clients.remove(conn)
-        conn.close()
-        print([-] ထွက်သွားသူ: {addr})
+# ၇ ရက်ထက် ကျော်လွန်သော မက်ဆေ့ဂျ်ဟောင်းများကို ဖျက်ဆီးခြင်း
+def cleanup_old_messages():
+    conn = sqlite3.connect('messages.db')
+    cursor = conn.cursor()
+    week_ago = datetime.now() - timedelta(days=7)
+    cursor.execute('DELETE FROM messages WHERE timestamp < ?', (week_ago,))
+    conn.commit()
+    conn.close()
 
-def start_server():
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind((HOST, PORT))
-    server.listen(5)
-    print(f"[*] Server စတင်အလုပ်လုပ်နေပါပြီ (Port: {PORT})...")
+init_db()
+
+@app.route('/')
+def index():
+    cleanup_old_messages()
+    return "Server with 7-day message storage is running successfully!"
+
+@app.route('/history', methods=['GET'])
+def get_history():
+    cleanup_old_messages()
+    conn = sqlite3.connect('messages.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT message, timestamp FROM messages ORDER BY id DESC')
+    rows = cursor.fetchall()
+    conn.close()
     
-    while True:
-        conn, addr = server.accept()
-        thread = threading.Thread(target=handle_client, args=(conn, addr))
-        thread.daemon = True
-        thread.start()
+    history = [{"message": row[0], "time": row[1]} for row in rows]
+    return jsonify(history)
+
+@socketio.on('message')
+def handle_message(data):
+    print(f"လက်ခံရရှိသော မက်ဆေ့ဂျ်: {data}")
+    
+    # တွေ့ရသော မက်ဆေ့ဂျ်ကို Database တွင် သိမ်းဆည်းရန်
+    conn = sqlite3.connect('messages.db')
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO messages (message, timestamp) VALUES (?, ?)', (data, datetime.now()))
+    conn.commit()
+    conn.close()
+    
+    # ချိတ်ဆက်ထားသူ အားလုံးထံသို့ ပို့ပေးခြင်း
+    send(data, broadcast=True, include_self=False)
 
 if __name__ == '__main__':
-    start_server()
-                          
+    port = int(os.environ.get("PORT", 5000))
+    socketio.run(app, host='0.0.0.0', port=port)
