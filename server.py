@@ -9,9 +9,9 @@ from flask_socketio import SocketIO, send, emit
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-# Database Initialization
+# Database Initialization (Including Device Management & History)
 def init_db():
-    conn = sqlite3.connect('app_lifetime.db')
+    conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS history (
@@ -25,11 +25,20 @@ def init_db():
             timestamp DATETIME
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS devices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT UNIQUE,
+            google_account TEXT,
+            status TEXT, -- 'pending', 'approved', 'banned'
+            last_active DATETIME
+        )
+    ''')
     conn.commit()
     conn.close()
 
 def cleanup_expired_data():
-    conn = sqlite3.connect('app_lifetime.db')
+    conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
     now = datetime.now()
     cursor.execute('DELETE FROM history WHERE expire_at IS NOT NULL AND expire_at < ?', (now,))
@@ -42,63 +51,68 @@ HTML_PAGE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Advanced Special Web App with Anime/Spacial Themes</title>
+    <title>WMA QQ - Advanced Special Web App</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <style>
         :root {
             --bg-color: #0f172a;
-            --panel-bg: #1e293b;
+            --panel-bg: rgba(30, 41, 59, 0.95);
             --text-color: #f8fafc;
             --accent-color: #3b82f6;
-            --chat-bg: #090d16;
-            --stream-bg: #1e293b;
-            --bg-image: none;
+            --chat-bg: rgba(9, 13, 22, 0.85);
+            --stream-bg: rgba(30, 41, 59, 0.9);
+            --bg-image: url('https://images.unsplash.com/photo-1604200213928-ba3cf4fc8436?auto=format&fit=crop&w=1920&q=80');
         }
         body { 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
             margin: 0; padding: 0; 
             background-color: var(--bg-color); 
             background-image: var(--bg-image);
-            background-size: cover; background-position: center;
+            background-size: cover; background-position: center; background-attachment: fixed;
             color: var(--text-color); display: flex; height: 100vh; overflow: hidden; 
         }
         
-        /* Split Screen UI: Left Controls, Right Live Chat & History */
-        .left-pane { width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box; background: rgba(30, 41, 59, 0.9); border-right: 2px solid #334155; position: relative; backdrop-filter: blur(5px); }
-        .right-pane { width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box; background: rgba(30, 41, 59, 0.85); position: relative; backdrop-filter: blur(5px); }
+        /* Split Screen UI */
+        .left-pane { width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box; background: var(--panel-bg); border-right: 2px solid #334155; position: relative; backdrop-filter: blur(8px); }
+        .right-pane { width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box; background: var(--stream-bg); position: relative; backdrop-filter: blur(8px); }
 
-        .card { background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid rgba(255,255,255,0.1); }
+        .card { background: rgba(255,255,255,0.07); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid rgba(255,255,255,0.15); }
         input, textarea, select, button { width: 100%; padding: 10px; margin: 8px 0; border-radius: 5px; border: 1px solid #475569; background: #0f172a; color: white; box-sizing: border-box; }
         button { background: var(--accent-color); cursor: pointer; font-weight: bold; border: none; }
         button:hover { opacity: 0.9; }
 
         #historyStream { flex: 1; overflow-y: auto; background: var(--chat-bg); border: 1px solid #334155; border-radius: 8px; padding: 10px; box-sizing: border-box; }
-        .history-item { padding: 10px; margin-bottom: 8px; background: rgba(255,255,255,0.03); border-left: 4px solid var(--accent-color); border-radius: 4px; font-size: 13px; word-break: break-all; }
+        .history-item { padding: 10px; margin-bottom: 8px; background: rgba(255,255,255,0.05); border-left: 4px solid var(--accent-color); border-radius: 4px; font-size: 13px; word-break: break-all; }
         .actions { margin-top: 5px; }
         .actions button { width: auto; padding: 4px 8px; font-size: 11px; margin-right: 5px; display: inline-block; }
 
         /* Floating Reset Storage Button */
         #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; width: auto; }
         
-        /* Storage Warning Background for Right Pane */
-        .storage-warning { background-color: #581c87 !important; transition: background 0.5s ease; }
+        /* Storage Warning Background */
+        .storage-warning { background-color: rgba(88, 28, 135, 0.95) !important; transition: background 0.5s ease; }
 
         /* Video Call Popup */
-        #videoPopup { display: none; position: fixed; top: 15%; left: 25%; width: 50%; background: #1e293b; border: 2px solid #3b82f6; border-radius: 10px; padding: 20px; z-index: 1000; box-shadow: 0 0 25px rgba(0,0,0,0.9); text-align: center; }
-        .video-grid { display: flex; justify-content: space-around; margin: 10px 0; }
-        video { width: 48%; background: black; border-radius: 5px; height: 200px; object-fit: cover; }
+        #videoPopup { display: none; position: fixed; top: 10%; left: 20%; width: 60%; background: #1e293b; border: 2px solid #3b82f6; border-radius: 10px; padding: 20px; z-index: 1000; box-shadow: 0 0 30px rgba(0,0,0,0.9); text-align: center; }
+        .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; max-height: 300px; overflow-y: auto; margin: 15px 0; }
+        .video-box { background: black; border-radius: 5px; padding: 5px; text-align: center; }
+        video { width: 100%; height: 150px; object-fit: cover; border-radius: 4px; background: #000; }
+
+        /* Device Management List Styling */
+        .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .badge-active { height: 10px; width: 10px; background-color: #22c55e; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px #22c55e; }
+        .badge-inactive { height: 10px; width: 10px; background-color: #64748b; border-radius: 50%; display: inline-block; }
     </style>
 </head>
 <body>
 
     <!-- Video Call Popup Dialog -->
     <div id="videoPopup">
-        <h3>Video Conference (10s limit)</h3>
+        <h3>WMA QQ - Video Conference (10s limit)</h3>
         <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: #38bdf8;"></div>
-        <div class="video-grid">
-            <div><p>My Video</p><video id="localVideo" autoplay muted></video></div>
-            <div><p>Remote Video</p><video id="remoteVideo" autoplay></video></div>
+        <div class="video-grid" id="videoGridContainer">
+            <!-- Dynamic video streams of all accepted devices will appear here -->
         </div>
         <div class="actions">
             <button onclick="acceptCallAction()" style="background: #16a34a;">Accept</button>
@@ -109,7 +123,7 @@ HTML_PAGE = """
 
     <!-- LEFT PANE: Controls & Functions -->
     <div class="left-pane">
-        <h2>Control Panel</h2>
+        <h2>WMA QQ Control Panel</h2>
         
         <div class="card">
             <h4>Spacial Theme & Anime Backgrounds</h4>
@@ -117,9 +131,15 @@ HTML_PAGE = """
         </div>
 
         <div class="card">
-            <h4>User & Auto-Detected Device Info (Function 6)</h4>
+            <h4>Device Management & Status</h4>
             <input type="text" id="deviceId" readonly placeholder="Auto-Detecting Device ID...">
-            <input type="text" id="googleAccount" placeholder="Google Account (ဥပမာ - user@gmail.com)">
+            <input type="text" id="googleAccount" placeholder="Google Account (e.g. user@gmail.com)" onchange="updateDeviceRegistration()">
+            <div id="deviceApprovalStatus" style="font-size: 12px; color: #facc15; margin-top: 5px;"></div>
+            
+            <h5 style="margin: 10px 0 5px 0;">Active Devices List:</h5>
+            <div id="activeDeviceList" style="max-height: 120px; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 5px; border-radius: 4px;">
+                <!-- Populated via socket/fetch -->
+            </div>
         </div>
 
         <div class="card">
@@ -145,7 +165,7 @@ HTML_PAGE = """
         </div>
 
         <div class="card">
-            <h4>Function 4: Original File or PDF/Image</h4>
+            <h4>Function 4: Original File, PDF or Image</h4>
             <input type="file" id="fileInput">
             <button onclick="sendFile()">Send Original File/PDF/Image (48h)</button>
         </div>
@@ -154,7 +174,7 @@ HTML_PAGE = """
     <!-- RIGHT PANE: Live Chat & Lifetime History Stream -->
     <div class="right-pane" id="rightPane">
         <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
-        <h3>Live Chat & Lifetime History Stream</h3>
+        <h3>WMA QQ - Live Chat & Lifetime History</h3>
         <div id="historyStream"></div>
     </div>
 
@@ -162,36 +182,90 @@ HTML_PAGE = """
     const socket = io();
     let mediaRecorder;
     let audioChunks = [];
-    let recordedAudioUrl = null;
+    let myStreamInstance = null;
 
-    // Auto-detect Device ID on load
+    // Auto-detect Device ID and Register
     window.onload = function() {
         let devId = localStorage.getItem('device_unique_id');
         if(!devId) {
-            devId = 'DEV-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+            devId = 'WMA-' + Math.random().toString(36).substring(2, 10).toUpperCase();
             localStorage.setItem('device_unique_id', devId);
         }
         document.getElementById('deviceId').value = devId;
+
+        // Register device with server & official email request check
+        updateDeviceRegistration();
 
         // Load Lifetime History
         fetch('/get_history').then(res => res.json()).then(data => {
             data.forEach(item => appendHistory(item));
         });
+
+        // Load active devices list
+        fetchDeviceList();
     };
+
+    function updateDeviceRegistration() {
+        let devId = document.getElementById('deviceId').value;
+        let account = document.getElementById('googleAccount').value || "officialwinmyat@gmail.com";
+        socket.emit('register_device', { device_id: devId, google_account: account });
+    }
+
+    socket.on('device_status_update', function(data) {
+        if(data.device_id === document.getElementById('deviceId').value) {
+            let statusDiv = document.getElementById('deviceApprovalStatus');
+            if(data.status === 'approved') {
+                statusDiv.style.color = '#4ade80';
+                statusDiv.innerText = "Status: Approved by officialwinmyat@gmail.com ✅";
+            } else if(data.status === 'banned') {
+                statusDiv.style.color = '#f87171';
+                statusDiv.innerText = "Status: Banned by Admin ❌";
+            } else {
+                statusDiv.style.color = '#facc15';
+                statusDiv.innerText = "Status: Pending approval request sent to officialwinmyat@gmail.com ⏳";
+            }
+        }
+        fetchDeviceList();
+    });
+
+    function fetchDeviceList() {
+        fetch('/get_devices').then(res => res.json()).then(devices => {
+            let container = document.getElementById('activeDeviceList');
+            container.innerHTML = '';
+            devices.forEach(d => {
+                let row = document.createElement('div');
+                row.className = 'device-row';
+                let dotClass = d.active ? 'badge-active' : 'badge-inactive';
+                row.innerHTML = `<span><span class="${dotClass}"></span> <b>${d.device_id}</b> (${d.account}) [${d.status}]</span>
+                    <span>
+                        <button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 5px; font-size:10px; background:green;">Approve</button>
+                        <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 5px; font-size:10px; background:red;">Ban</button>
+                        <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 5px; font-size:10px; background:gray;">Remove</button>
+                    </span>`;
+                container.appendChild(row);
+            });
+        });
+    }
+
+    function adminAction(devId, action) {
+        socket.emit('admin_device_action', { device_id: devId, action: action });
+    }
 
     function getMeta() {
         return {
             device: document.getElementById('deviceId').value || "Unknown Device",
-            account: document.getElementById('googleAccount').value || "Unknown Account"
+            account: document.getElementById('googleAccount').value || "officialwinmyat@gmail.com"
         };
     }
 
-    // Spacial Theme & Anime/Spider-Man Background Generator
+    // High Visibility Spacial Themes & Anime Backgrounds (Randomized uniquely each time)
     const animeThemes = [
         { name: "Spider-Man Universe", url: "https://images.unsplash.com/photo-1604200213928-ba3cf4fc8436?auto=format&fit=crop&w=1920&q=80" },
         { name: "Japanese Anime City", url: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80" },
         { name: "Cyberpunk Chinese Anime", url: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80" },
-        { name: "Neon Spiderverse", url: "https://images.unsplash.com/photo-1635863138275-d9b33299680b?auto=format&fit=crop&w=1920&q=80" }
+        { name: "Neon Spiderverse", url: "https://images.unsplash.com/photo-1635863138275-d9b33299680b?auto=format&fit=crop&w=1920&q=80" },
+        { name: "Epic Mecha Anime", url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80" },
+        { name: "Action Spider-Man Hero", url: "https://images.unsplash.com/photo-1635805737707-575885ab0820?auto=format&fit=crop&w=1920&q=80" }
     ];
 
     function autoGenerateSpacialTheme() {
@@ -199,6 +273,8 @@ HTML_PAGE = """
         let randomAccent = '#' + Math.floor(Math.random()*16777215).toString(16);
         document.documentElement.style.setProperty('--accent-color', randomAccent);
         document.documentElement.style.setProperty('--bg-image', `url('${theme.url}')`);
+        // Apply background to right pane live chat as well for full immersion
+        document.documentElement.style.setProperty('--stream-bg', 'rgba(30, 41, 59, 0.75)');
     }
 
     // Function 1: Real Voice Recording (3 seconds max)
@@ -215,8 +291,6 @@ HTML_PAGE = """
                 };
                 mediaRecorder.onstop = () => {
                     let audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
-                    recordedAudioUrl = URL.createObjectURL(audioBlob);
-                    
                     let reader = new FileReader();
                     reader.readAsDataURL(audioBlob);
                     reader.onloadend = function() {
@@ -238,7 +312,7 @@ HTML_PAGE = """
                     }
                 }, 3000);
             } catch(e) {
-                alert("Microphone access denied or not supported.");
+                alert("Microphone access denied.");
             }
         }
     }
@@ -282,7 +356,7 @@ HTML_PAGE = """
         document.getElementById('textContent').value = '';
     }
 
-    // Function 4: Original File/PDF/Image
+    // Function 4: Original File, PDF or Image
     function sendFile() {
         let fileInput = document.getElementById('fileInput');
         if(fileInput.files.length === 0) return;
@@ -357,30 +431,45 @@ HTML_PAGE = """
         btn.closest('.history-item').remove();
     }
 
-    // Video Conference Handlers (Caller & Receiver mutual view)
-    let localStreamObj = null;
+    // Multi-Device Video Conference Handlers
     function openVideoPopup(user) {
-        document.getElementById('callerInfo').innerText = "Connected with: " + user;
+        document.getElementById('callerInfo').innerText = "Connected with call initiator: " + user;
         document.getElementById('videoPopup').style.display = 'block';
         
         navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
-            localStreamObj = stream;
-            document.getElementById('localVideo').srcObject = stream;
-            // Mirror peer connection simulation
-            document.getElementById('remoteVideo').srcObject = stream; 
-        }).catch(err => alert("Camera/Microphone permission required for video conference."));
+            myStreamInstance = stream;
+            let grid = document.getElementById('videoGridContainer');
+            grid.innerHTML = '';
+
+            // Add My Video Box
+            let myBox = document.createElement('div');
+            myBox.className = 'video-box';
+            myBox.innerHTML = `<p style="font-size:11px; margin:2px;">My Video</p><video autoplay muted></video>`;
+            myBox.querySelector('video').srcObject = stream;
+            grid.appendChild(myBox);
+
+            // Request active accepted users video streams
+            socket.emit('request_conference_peers');
+        }).catch(err => alert("Camera permission required."));
     }
 
+    socket.on('receive_peer_stream', function(peerData) {
+        let grid = document.getElementById('videoGridContainer');
+        let peerBox = document.createElement('div');
+        peerBox.className = 'video-box';
+        peerBox.innerHTML = `<p style="font-size:11px; margin:2px;">${peerData.device}</p><video autoplay src="${peerData.stream_url}"></video>`;
+        grid.appendChild(peerBox);
+    });
+
     function acceptCallAction() {
-        alert("Video Conference Active!");
+        alert("Conference Accepted & Active!");
+        socket.emit('join_conference', { device: getMeta().device });
     }
 
     function stopConference() {
-        if(localStreamObj) {
-            localStreamObj.getTracks().forEach(track => track.stop());
+        if(myStreamInstance) {
+            myStreamInstance.getTracks().forEach(track => track.stop());
         }
-        document.getElementById('localVideo').srcObject = null;
-        document.getElementById('remoteVideo').srcObject = null;
         document.getElementById('videoPopup').style.display = 'none';
     }
 
@@ -388,7 +477,7 @@ HTML_PAGE = """
         stopConference();
     }
 
-    // Server-wide Storage Reset Function
+    // Server-wide Storage Reset
     function resetStorage() {
         if(confirm("Render Server တစ်ခုလုံးရှိ သိမ်းဆည်းထားသော အချက်အလက်များကို အမှန်တကယ် ရှင်းလင်းမည်လား?")) {
             socket.emit('server_reset_storage');
@@ -406,7 +495,7 @@ HTML_PAGE = """
 
     socket.on('force_reload_ui', function() {
         document.getElementById('historyStream').innerHTML = '';
-        alert("Server storage was completely reset by admin/system.");
+        alert("Server storage completely reset.");
     });
 </script>
 </body>
@@ -420,7 +509,7 @@ def index():
 
 @app.route('/get_history')
 def get_history():
-    conn = sqlite3.connect('app_lifetime.db')
+    conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
     cursor.execute('SELECT id, user_info, msg_type, content, filename, store_type FROM history ORDER BY id ASC')
     rows = cursor.fetchall()
@@ -438,6 +527,57 @@ def get_history():
         })
     return jsonify(history)
 
+@app.route('/get_devices')
+def get_devices():
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT device_id, google_account, status FROM devices')
+    rows = cursor.fetchall()
+    conn.close()
+    devices = []
+    for r in rows:
+        devices.append({
+            'device_id': r[0],
+            'account': r[1],
+            'status': r[2],
+            'active': r[2] == 'approved'
+        })
+    return jsonify(devices)
+
+@socketio.on('register_device')
+def handle_register_device(data):
+    dev_id = data.get('device_id')
+    account = data.get('google_account', 'officialwinmyat@gmail.com')
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
+    row = cursor.fetchone()
+    if not row:
+        # New device request sent to officialwinmyat@gmail.com
+        cursor.execute('INSERT INTO devices (device_id, google_account, status, last_active) VALUES (?, ?, ?, ?)',
+                       (dev_id, account, 'pending', datetime.now()))
+        status = 'pending'
+    else:
+        status = row[0]
+        cursor.execute('UPDATE devices SET last_active = ? WHERE device_id = ?', (datetime.now(), dev_id))
+    conn.commit()
+    conn.close()
+    emit('device_status_update', {'device_id': dev_id, 'status': status}, broadcast=True)
+
+@socketio.on('admin_device_action')
+def handle_admin_action(data):
+    dev_id = data.get('device_id')
+    action = data.get('action') # 'approved', 'banned', 'remove'
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    if action == 'remove':
+        cursor.execute('DELETE FROM devices WHERE device_id = ?', (dev_id,))
+    else:
+        cursor.execute('UPDATE devices SET status = ? WHERE device_id = ?', (action, dev_id))
+    conn.commit()
+    conn.close()
+    emit('device_status_update', {'device_id': dev_id, 'status': action}, broadcast=True)
+
 @socketio.on('new_message')
 def handle_new_message(data):
     store = data.get('store', '48h')
@@ -450,18 +590,16 @@ def handle_new_message(data):
     elif store == '48h':
         expire = now + timedelta(hours=48)
 
-    conn = sqlite3.connect('app_lifetime.db')
+    conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
     cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)',
                    (data.get('user'), data.get('type'), data.get('content'), data.get('filename'), store, expire, now))
     conn.commit()
-    
     cursor.execute('SELECT COUNT(*) FROM history')
     count = cursor.fetchone()[0]
     conn.close()
 
     socketio.emit('broadcast_message', data)
-    
     if count > 50:
         socketio.emit('storage_warning', True)
     else:
@@ -469,7 +607,7 @@ def handle_new_message(data):
 
 @socketio.on('server_reset_storage')
 def handle_server_reset_storage():
-    conn = sqlite3.connect('app_lifetime.db')
+    conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
     cursor.execute('DELETE FROM history')
     conn.commit()
