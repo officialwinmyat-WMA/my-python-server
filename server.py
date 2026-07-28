@@ -5,16 +5,13 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template_string, session
 
-# Python 3.14 + eventlet monkey_patch error fix
+# Python 3.11+ compatibility fix for eventlet
 import sys
 import eventlet
-if sys.version_info >= (3, 11):
-    try:
-        eventlet.monkey_patch()
-    except Exception:
-        pass
-else:
+try:
     eventlet.monkey_patch()
+except Exception:
+    pass
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "wma_qq_secure_secret_key_123")
@@ -540,7 +537,7 @@ HTML_PAGE = """
                     document.getElementById('overlayTitle').innerText = "Access Banned ❌";
                     document.getElementById('overlayStatus').innerText = "Status: Banned by Admin";
                     document.getElementById('overlayStatus').style.color = "#ef4444";
-                    document.getElementById('overlayDeviceId.value = currentDevId';
+                    document.getElementById('overlayDeviceId').value = currentDevId;
                     document.getElementById('pendingOverlay').style.display = 'flex';
                     document.getElementById('appContainer').style.display = 'none';
                 } else {
@@ -735,9 +732,9 @@ HTML_PAGE = """
     });
 
     let themes = [
-        "url('https://images.unsplash.com/photo-1635863138275-d9b33299780b?auto=format&fit=crop&w=1920&q=80')", // Spider-Man vibe
-        "url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80')", // Anime vibe
-        "url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80')"  // Cyberpunk vibe
+        "url('https://images.unsplash.com/photo-1635863138275-d9b33299780b?auto=format&fit=crop&w=1920&q=80')",
+        "url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80')",
+        "url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80')"
     ];
     function autoGenerateSpacialTheme() {
         let randomTheme = themes[Math.floor(Math.random() * themes.length)];
