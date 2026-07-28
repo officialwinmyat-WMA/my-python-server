@@ -5,10 +5,20 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template_string, session
 
+# Python 3.14 + eventlet monkey_patch error fix
+import sys
+import eventlet
+if sys.version_info >= (3, 11):
+    try:
+        eventlet.monkey_patch()
+    except Exception:
+        pass
+else:
+    eventlet.monkey_patch()
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "wma_qq_secure_secret_key_123")
 
-import eventlet
 from flask_socketio import SocketIO, emit
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
@@ -69,6 +79,10 @@ def send_approval_email(device_id, google_account):
         server.quit()
     except Exception as e:
         print("Email notification error:", e)
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_PAGE)
 
 @app.route('/signup', methods=['POST'])
 def signup():
@@ -429,268 +443,280 @@ HTML_PAGE = """
 
     window.onload = function() {
         checkSession();
+        loadHistory();
+        loadDevices();
     };
 
     function togglePasswordVisibility() {
         let pwdInput = document.getElementById('loginPassword');
-        pwdInput.type = (pwdInput.type === 'password') ? 'text' : 'password';
+        pwdInput.type = document.getElementById('showPasswordToggle').checked ? 'text' : 'password';
     }
 
     function checkSession() {
-        fetch('/check_session').then(res => res.json()).then(data => {
-            if(data.logged_in) {
+        fetch('/check_session')
+        .then(res => res.json())
+        .then(data => {
+            if (data.logged_in) {
                 document.getElementById('authOverlay').style.display = 'none';
                 document.getElementById('currentLoggedInEmail').innerText = data.email;
-                
-                let devId = localStorage.getItem('device_unique_id');
-                if(!devId) {
-                    devId = 'WMA-' + Math.random().toString(36).substring(2, 10).toUpperCase();
-                    localStorage.setItem('device_unique_id', devId);
+                if(data.is_admin) {
+                    document.getElementById('adminControlCard').style.display = 'block';
+                    document.getElementById('resetBtn').style.display = 'block';
                 }
-                document.getElementById('overlayDeviceId').value = devId;
-
-                socket.emit('register_device', { device_id: devId });
-                checkDeviceStatus();
-
-                fetch('/get_history').then(res => res.json()).then(historyData => {
-                    let stream = document.getElementById('historyStream');
-                    stream.innerHTML = '';
-                    historyData.reverse().forEach(item => appendHistory(item));
-                });
+                verifyDevice(data.email);
             } else {
                 document.getElementById('authOverlay').style.display = 'flex';
                 document.getElementById('appContainer').style.display = 'none';
-                document.getElementById('pendingOverlay').style.display = 'none';
             }
         });
     }
 
     function loginUser() {
-        let email = document.getElementById('loginEmail').value.trim();
+        let email = document.getElementById('loginEmail').value;
         let password = document.getElementById('loginPassword').value;
-        let errDiv = document.getElementById('loginError');
-        errDiv.innerText = "Checking credentials... ⏳";
-
         fetch('/login', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: email, password: password })
-        }).then(res => res.json()).then(data => {
-            if(data.success) { checkSession(); } else { errDiv.innerText = data.error; }
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({email, password})
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                document.getElementById('loginError').innerText = data.error;
+            }
         });
     }
 
     function signupUser() {
-        let email = document.getElementById('loginEmail').value.trim();
+        let email = document.getElementById('loginEmail').value;
         let password = document.getElementById('loginPassword').value;
-        let errDiv = document.getElementById('loginError');
-        errDiv.innerText = "Creating account... ⏳";
-
         fetch('/signup', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: email, password: password })
-        }).then(res => res.json()).then(data => {
-            if(data.success) { checkSession(); } else { errDiv.innerText = data.error; }
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({email, password})
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                document.getElementById('loginError').innerText = data.error;
+            }
         });
     }
 
     function logoutUser() {
-        fetch('/logout', { method: 'POST' }).then(() => { window.location.reload(); });
+        fetch('/logout', {method: 'POST'}).then(() => location.reload());
     }
 
-    function checkDeviceStatus() {
-        let devId = localStorage.getItem('device_unique_id');
-        fetch('/get_devices').then(res => res.json()).then(devices => {
-            let currentDev = devices.find(d => d.device_id === devId);
-            
-            fetch('/check_session').then(res => res.json()).then(sessionData => {
-                let isAdmin = sessionData.is_admin;
-                let adminCard = document.getElementById('adminControlCard');
-                let resetBtn = document.getElementById('resetBtn');
-                
-                if(isAdmin) {
-                    adminCard.style.display = 'block';
-                    resetBtn.style.display = 'block';
-                    fetchDeviceList();
-                } else {
-                    adminCard.style.display = 'none';
-                    resetBtn.style.display = 'none';
-                }
+    function getDeviceId() {
+        let devId = localStorage.getItem('wma_device_id');
+        if (!devId) {
+            devId = 'DEV-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+            localStorage.setItem('wma_device_id', devId);
+        }
+        return devId;
+    }
 
-                if(isAdmin || (currentDev && currentDev.status === 'approved')) {
-                    document.getElementById('pendingOverlay').style.display = 'none';
-                    document.getElementById('appContainer').style.display = 'flex';
-                } else {
-                    document.getElementById('pendingOverlay').style.display = 'flex';
-                    document.getElementById('appContainer').style.display = 'none';
-                    if(currentDev) {
-                        let statusTxt = document.getElementById('overlayStatus');
-                        if(currentDev.status === 'banned') {
-                            statusTxt.style.color = '#f87171';
-                            statusTxt.innerText = "Status: Banned by Admin ❌";
-                        } else {
-                            statusTxt.style.color = '#facc15';
-                            statusTxt.innerText = "Status: Pending approval from officialwinmyat@gmail.com ⏳";
-                        }
-                    }
-                }
-            });
-        });
+    function verifyDevice(email) {
+        let devId = getDeviceId();
+        socket.emit('register_device', {device_id: devId, google_account: email});
     }
 
     socket.on('device_status_update', function(data) {
-        checkDeviceStatus();
+        loadDevices();
+        fetch('/get_devices')
+        .then(res => res.json())
+        .then(devices => {
+            let currentDevId = getDeviceId();
+            let currentDev = devices.find(d => d.device_id === currentDevId);
+            if (currentDev) {
+                if (currentDev.status === 'approved') {
+                    document.getElementById('pendingOverlay').style.display = 'none';
+                    document.getElementById('appContainer').style.display = 'flex';
+                } else if (currentDev.status === 'banned') {
+                    document.getElementById('overlayTitle').innerText = "Access Banned ❌";
+                    document.getElementById('overlayStatus').innerText = "Status: Banned by Admin";
+                    document.getElementById('overlayStatus').style.color = "#ef4444";
+                    document.getElementById('overlayDeviceId.value = currentDevId';
+                    document.getElementById('pendingOverlay').style.display = 'flex';
+                    document.getElementById('appContainer').style.display = 'none';
+                } else {
+                    document.getElementById('overlayDeviceId').value = currentDevId;
+                    document.getElementById('pendingOverlay').style.display = 'flex';
+                    document.getElementById('appContainer').style.display = 'none';
+                }
+            }
+        });
     });
 
-    function fetchDeviceList() {
-        fetch('/get_devices').then(res => res.json()).then(devices => {
-            let container = document.getElementById('activeDeviceList');
-            if(!container) return;
-            container.innerHTML = '';
+    function loadDevices() {
+        fetch('/get_devices')
+        .then(res => res.json())
+        .then(devices => {
+            let listDiv = document.getElementById('activeDeviceList');
+            if(!listDiv) return;
+            listDiv.innerHTML = '';
             devices.forEach(d => {
                 let row = document.createElement('div');
                 row.className = 'device-row';
-                let dotClass = d.active ? 'badge-active' : 'badge-inactive';
-                row.innerHTML = `<span><span class="${dotClass}"></span> <b>${d.device_id}</b> (${d.account}) [${d.status}]</span>
-                    <span>
-                        <button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 5px; font-size:10px; background:green;">Approve</button>
-                        <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 5px; font-size:10px; background:orange;">Ban</button>
-                        <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 5px; font-size:10px; background:red;">Remove</button>
-                    </span>`;
-                container.appendChild(row);
+                let actionBtns = '';
+                if (d.is_current_user_admin) {
+                    actionBtns = `<button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 5px; font-size:10px; width:auto; background:#16a34a;">Approve</button>
+                                  <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 5px; font-size:10px; width:auto; background:#ca8a04;">Ban</button>
+                                  <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 5px; font-size:10px; width:auto; background:#dc2626;">Remove</button>`;
+                }
+                row.innerHTML = `<div><span class="${d.active ? 'badge-active' : 'badge-inactive'}"></span> <b>${d.device_id}</b> (${d.account}) [<b>${d.status}</b>]</div><div>${actionBtns}</div>`;
+                listDiv.appendChild(row);
             });
         });
     }
 
-    function adminAction(devId, action) {
-        socket.emit('admin_device_action', { device_id: devId, action: action });
+    function adminAction(deviceId, action) {
+        socket.emit('admin_device_action', {device_id: deviceId, action: action});
     }
 
-    const spacialThemes = [
-        { name: "Spider-Man Universe", url: "https://images.unsplash.com/photo-1604200213928-ba3cf4fc8436?auto=format&fit=crop&w=1920&q=80", accent: "#ef4444" },
-        { name: "Japanese Anime Art", url: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" },
-        { name: "Chinese Cyberpunk", url: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#8b5cf6" },
-        { name: "Neon Sci-Fi", url: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", accent: "#06b6d4" }
-    ];
-
-    function autoGenerateSpacialTheme() {
-        let theme = spacialThemes[Math.floor(Math.random() * spacialThemes.length)];
-        document.documentElement.style.setProperty('--accent-color', theme.accent);
-        document.documentElement.style.setProperty('--bg-image', `url('${theme.url}')`);
+    function loadHistory() {
+        fetch('/get_history')
+        .then(res => res.json())
+        .then(history => {
+            let stream = document.getElementById('historyStream');
+            stream.innerHTML = '';
+            history.reverse().forEach(h => appendHistoryItem(h));
+        });
     }
 
-    let isRecording = false;
-    async function toggleRecordVoice() {
+    function appendHistoryItem(h) {
+        let stream = document.getElementById('historyStream');
+        let div = document.createElement('div');
+        div.className = 'history-item';
+        let contentDisplay = h.content;
+        if(h.type === 'voice') {
+            contentDisplay = `<audio controls src="${h.content}"></audio>`;
+        } else if(h.type === 'file') {
+            contentDisplay = `<a href="${h.content}" target="_blank" style="color:#f472b6; font-weight:bold;">📎 Download ${h.filename}</a>`;
+        }
+        div.innerHTML = `<b>${h.user}</b> <span style="font-size:10px; color:#94a3b8;">(${h.timestamp}) [Store: ${h.store}]</span><br>${contentDisplay}`;
+        stream.appendChild(div);
+        stream.scrollTop = stream.scrollHeight;
+    }
+
+    socket.on('broadcast_message', function(data) {
+        appendHistoryItem(data);
+    });
+
+    let recordingTimer = null;
+    function toggleRecordVoice() {
         let btn = document.getElementById('recBtn');
-        if (!isRecording) {
-            try {
-                let stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+            audioChunks = [];
+            navigator.mediaDevices.getUserMedia({audio: true}).then(stream => {
                 mediaRecorder = new MediaRecorder(stream);
-                audioChunks = [];
                 mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
                 mediaRecorder.onstop = () => {
-                    let audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
+                    let blob = new Blob(audioChunks, {type: 'audio/webm'});
                     let reader = new FileReader();
-                    reader.readAsDataURL(audioBlob);
-                    reader.onloadend = function() {
-                        window.latestBase64Audio = reader.result;
-                        document.getElementById('voiceOptions').style.display = "block";
+                    reader.readAsDataURL(blob);
+                    reader.onloadend = () => {
+                        window.lastRecordedAudio = reader.result;
+                        document.getElementById('voiceOptions').style.display = 'block';
                     };
                 };
                 mediaRecorder.start();
-                isRecording = true;
+                btn.innerText = "Recording... (Speaking max 3s)";
                 btn.style.background = "#dc2626";
-                btn.innerText = "Recording... (Max 3s)";
-                setTimeout(() => {
-                    if(isRecording) {
+                recordingTimer = setTimeout(() => {
+                    if(mediaRecorder && mediaRecorder.state === 'recording') {
                         mediaRecorder.stop();
-                        isRecording = false;
-                        btn.style.background = "";
                         btn.innerText = "Record Voice (3s)";
+                        btn.style.background = "var(--accent-color)";
                     }
                 }, 3000);
-            } catch(e) { alert("Microphone access denied."); }
+            });
         }
     }
 
-    function sendVoice(duration) {
-        let userEmail = document.getElementById('currentLoggedInEmail').innerText;
-        let devId = localStorage.getItem('device_unique_id');
-        let userInfo = `${userEmail} (${devId})`;
-        socket.emit('new_message', { type: 'voice', user: userInfo, content: window.latestBase64Audio, store: duration });
-        document.getElementById('voiceOptions').style.display = "none";
+    function sendVoice(storeType) {
+        if(window.lastRecordedAudio) {
+            let userEmail = document.getElementById('currentLoggedInEmail').innerText;
+            socket.emit('new_message', {
+                user: userEmail,
+                type: 'voice',
+                content: window.lastRecordedAudio,
+                store: storeType
+            });
+            document.getElementById('voiceOptions').style.display = 'none';
+            window.lastRecordedAudio = null;
+        }
     }
 
     function solveEquation(el) {
-        let val = el.value;
-        if(val.includes("=")) {
-            let parts = val.split("=");
-            let expr = parts[0].trim();
+        let val = el.value.trim();
+        if (val.endsWith('=')) {
             try {
-                let res = eval(expr);
-                el.value = expr + " = " + res;
+                let expr = val.slice(0, -1).trim();
+                let ans = Function('"use strict";return (' + expr + ')')();
+                el.value = val + ' ' + ans;
             } catch(e) {}
         }
     }
 
     function sendText() {
-        let content = document.getElementById('textContent').value.trim();
-        if(!content) return;
+        let text = document.getElementById('textContent').value.trim();
+        if(!text) return;
         let userEmail = document.getElementById('currentLoggedInEmail').innerText;
-        let devId = localStorage.getItem('device_unique_id');
-        let userInfo = `${userEmail} (${devId})`;
-        socket.emit('new_message', { type: 'text', user: userInfo, content: content, store: '48h' });
+        socket.emit('new_message', {
+            user: userEmail,
+            type: 'text',
+            content: text,
+            store: '48h'
+        });
         document.getElementById('textContent').value = '';
     }
 
     function sendFile() {
         let fileInput = document.getElementById('fileInput');
-        if(fileInput.files.length === 0) { alert("ဖိုင်တစ်ခု ရွေးချယ်ပါ။"); return; }
+        if(fileInput.files.length === 0) return;
         let file = fileInput.files[0];
         let reader = new FileReader();
         reader.readAsDataURL(file);
-        reader.onloadend = function() {
+        reader.onloadend = () => {
             let userEmail = document.getElementById('currentLoggedInEmail').innerText;
-            let devId = localStorage.getItem('device_unique_id');
-            let userInfo = `${userEmail} (${devId})`;
-            socket.emit('new_message', { type: 'file', user: userInfo, content: reader.result, filename: file.name, store: '48h' });
+            socket.emit('new_message', {
+                user: userEmail,
+                type: 'file',
+                content: reader.result,
+                filename: file.name,
+                store: '48h'
+            });
             fileInput.value = '';
-        }
+        };
     }
 
     function triggerVideoCall() {
-        document.getElementById('callerInfo').innerText = "Video Call ခေါ်ဆိုနေသည် (10s)...";
-        document.getElementById('videoPopup').style.display = 'block';
-        navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
-            localStream = stream;
-            document.getElementById('localVideo').srcObject = stream;
-        }).catch(e => alert("Camera access denied."));
-        socket.emit('trigger_video_call', { user: document.getElementById('currentLoggedInEmail').innerText });
-        
-        videoCallTimeout = setTimeout(() => {
-            stopConference();
-        }, 10000);
+        let userEmail = document.getElementById('currentLoggedInEmail').innerText;
+        socket.emit('trigger_video_call', {caller: userEmail});
     }
 
     socket.on('incoming_video_call', function(data) {
-        document.getElementById('callerInfo').innerText = `${data.user} မှ Video Call ခေါ်ဆိုနေပါသည်။ (Accept နှိပ်ပါ)`;
+        document.getElementById('callerInfo').innerText = "Caller: " + data.caller;
         document.getElementById('videoPopup').style.display = 'block';
-        navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+        navigator.mediaDevices.getUserMedia({video: true, audio: true}).then(stream => {
             localStream = stream;
             document.getElementById('localVideo').srcObject = stream;
-        }).catch(e => {});
-
+        });
         videoCallTimeout = setTimeout(() => {
             stopConference();
         }, 10000);
     });
 
     function stopConference() {
-        if(videoCallTimeout) clearTimeout(videoCallTimeout);
         if(localStream) {
             localStream.getTracks().forEach(track => track.stop());
         }
+        if(videoCallTimeout) clearTimeout(videoCallTimeout);
         document.getElementById('videoPopup').style.display = 'none';
     }
 
@@ -699,57 +725,28 @@ HTML_PAGE = """
     }
 
     function resetStorage() {
-        if(confirm("Render server ရှိ recorded data များကို အကုန်ဖျက်မည်မှာ သေချာပါသလား?")) {
+        if(confirm('Are you sure you want to reset all history storage?')) {
             socket.emit('reset_storage');
         }
     }
 
     socket.on('storage_reset', function() {
         document.getElementById('historyStream').innerHTML = '';
-        alert("Storage successfully cleared!");
     });
 
-    socket.on('broadcast_message', function(data) {
-        appendHistory(data);
-    });
-
-    function appendHistory(data) {
-        let stream = document.getElementById('historyStream');
-        let item = document.createElement('div');
-        item.className = 'history-item';
-        
-        let innerHTML = `<b>${data.user}</b> <span style="font-size:10px; color:#94a3b8;">[${data.timestamp}] (Store: ${data.store})</span><br>`;
-        if(data.type === 'text') {
-            innerHTML += `<p style="margin:5px 0;">${data.content}</p>`;
-            innerHTML += `<button onclick="copyText(this)" style="width:auto; padding:3px 8px; font-size:10px; margin-right:5px;">Copy</button>`;
-            innerHTML += `<button onclick="this.parentElement.remove()" style="width:auto; padding:3px 8px; font-size:10px; background:#dc2626; margin-right:5px;">Delete</button>`;
-            innerHTML += `<button onclick="alert('Store 1 month extended')" style="width:auto; padding:3px 8px; font-size:10px; background:#2563eb;">1 Month Store</button>`;
-        } else if(data.type === 'voice') {
-            innerHTML += `<audio controls src="${data.content}" style="width:100%; height:35px; margin-top:5px;"></audio>`;
-            innerHTML += `<a href="${data.content}" download="voice_message.mp3" style="display:inline-block; padding:3px 8px; font-size:10px; background:#16a34a; color:white; text-decoration:none; border-radius:3px; margin-right:5px; margin-top:5px;">Download MP3</a>`;
-            innerHTML += `<button onclick="this.parentElement.remove()" style="width:auto; padding:3px 8px; font-size:10px; background:#dc2626;">Delete</button>`;
-        } else if(data.type === 'file') {
-            innerHTML += `<a href="${data.content}" download="${data.filename}" style="color:#f472b6; display:block; margin-top:5px;">📎 Original File: ${data.filename}</a>`;
-            innerHTML += `<a href="${data.content}" download="${data.filename}" style="display:inline-block; padding:3px 8px; font-size:10px; background:#16a34a; color:white; text-decoration:none; border-radius:3px; margin-right:5px; margin-top:5px;">Save / Download</a>`;
-            innerHTML += `<button onclick="this.parentElement.remove()" style="width:auto; padding:3px 8px; font-size:10px; background:#dc2626;">Delete</button>`;
-        }
-        item.innerHTML = innerHTML;
-        stream.prepend(item);
-    }
-
-    function copyText(btn) {
-        let txt = btn.previousElementSibling.innerText;
-        navigator.clipboard.writeText(txt);
-        alert("Text copied to clipboard!");
+    let themes = [
+        "url('https://images.unsplash.com/photo-1635863138275-d9b33299780b?auto=format&fit=crop&w=1920&q=80')", // Spider-Man vibe
+        "url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80')", // Anime vibe
+        "url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80')"  // Cyberpunk vibe
+    ];
+    function autoGenerateSpacialTheme() {
+        let randomTheme = themes[Math.floor(Math.random() * themes.length)];
+        document.body.style.backgroundImage = randomTheme;
     }
 </script>
 </body>
 </html>
 """
-
-@app.route('/')
-def index():
-    return render_template_string(HTML_PAGE)
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
