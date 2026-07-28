@@ -38,6 +38,14 @@ def init_db():
             last_active DATETIME
         )
     ''')
+    # Users table for local sign up / login verification
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE,
+            password TEXT
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -63,24 +71,48 @@ def send_approval_email(device_id, google_account):
     except Exception as e:
         print("Email notification error:", e)
 
+@app.route('/signup', methods=['POST'])
+def signup():
+    data = request.json
+    email = data.get('email', '').strip().lower()
+    password = data.get('password', '')
+    
+    if not email or not password:
+        return jsonify({"success": False, "error": "Email နှင့် Password ထည့်ရန် လိုအပ်ပါသည်။"})
+    
+    try:
+        conn = sqlite3.connect('wma_qq.db')
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO users (email, password) VALUES (?, ?)', (email, password))
+        conn.commit()
+        conn.close()
+        
+        session['user_email'] = email
+        session['is_admin'] = (email == 'officialwinmyat@gmail.com')
+        return jsonify({"success": True, "is_admin": session['is_admin']})
+    except sqlite3.IntegrityError:
+        return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်ရှိနှင့်ပြီးသား ဖြစ်ပါသည်။ Login ဝင်ပါ။"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
     
-    # Google Account Login Verification (Using standard SMTP login test to verify Google credentials)
-    try:
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(email, password)
-        server.quit()
-        
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT password FROM users WHERE email = ?', (email,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row and row[0] == password:
         session['user_email'] = email
         session['is_admin'] = (email == 'officialwinmyat@gmail.com')
         return jsonify({"success": True, "is_admin": session['is_admin']})
-    except Exception as e:
-        return jsonify({"success": False, "error": "Invalid Google Account or App Password! မှန်ကန်သော Google Email နှင့် Password/App Password ကို ထည့်ပါ။"})
+    else:
+        return jsonify({"success": False, "error": "Email သို့မဟုတ် Password မှားယွင်းနေပါသည်။ (မရှိသေးပါက Sign Up လုပ်ပါ)"})
 
 @app.route('/logout', methods=['POST'])
 def logout():
@@ -133,7 +165,6 @@ def handle_register_device(data):
     row = cursor.fetchone()
     
     if not row:
-        # New device defaults to pending unless it's the admin
         status = 'approved' if google_acc == 'officialwinmyat@gmail.com' else 'pending'
         cursor.execute('INSERT INTO devices (device_id, google_account, status, last_active) VALUES (?, ?, ?, ?)',
                        (dev_id, google_acc, status, datetime.now()))
@@ -149,12 +180,11 @@ def handle_register_device(data):
 
 @socketio.on('admin_device_action')
 def handle_admin_action(data):
-    # Security check: Only officialwinmyat@gmail.com can perform admin actions
     if session.get('user_email') != 'officialwinmyat@gmail.com':
         return
 
     dev_id = data.get('device_id')
-    action = data.get('action') # 'approved', 'banned', 'remove'
+    action = data.get('action') 
     
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
@@ -202,9 +232,7 @@ HTML_PAGE = """
 
         #historyStream { flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color); border-radius: 8px; padding: 10px; box-sizing: border-box; backdrop-filter: blur(5px); }
         .history-item { padding: 10px; margin-bottom: 8px; background: rgba(255,255,255,0.08); border-left: 6px solid var(--accent-color); border-right: 2px solid var(--accent-color); border-radius: 4px; font-size: 13px; word-break: break-all; }
-        .actions { margin-top: 5px; }
-        .actions button { width: auto; padding: 4px 8px; font-size: 11px; margin-right: 5px; display: inline-block; border: 1px solid #fff; }
-
+        
         #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); }
         
         .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
@@ -218,14 +246,21 @@ HTML_PAGE = """
 </head>
 <body>
 
-    <!-- Google Account Login Screen -->
+    <!-- Login / Sign Up Screen -->
     <div id="authOverlay">
-        <h2 style="color: #f472b6;">WMA QQ - Google Account Authentication</h2>
-        <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">ကျေးဇူးပြု၍ သင်၏ Google Email နှင့် Password (သို့မဟုတ် App Password) ဖြင့် ဝင်ရောက်ပါ။</p>
+        <h2 style="color: #f472b6;">WMA QQ - Account Login & Sign Up</h2>
+        <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password ဖြင့် ဝင်ရောက်ပါ (သို့မဟုတ် အကောင့်အသစ်ဖွင့်ပါ)</p>
         <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 8px; border: 2px solid var(--accent-color); width: 320px;">
-            <input type="email" id="loginEmail" placeholder="Google Email (e.g. user@gmail.com)">
-            <input type="password" id="loginPassword" placeholder="Google Password / App Password">
-            <button onclick="loginUser()" style="background: var(--accent-color); margin-top: 10px;">Login with Google</button>
+            <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
+            <input type="password" id="loginPassword" placeholder="Password">
+            
+            <!-- Show Password Checkbox -->
+            <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0 10px 0;">
+                <input type="checkbox" id="showPasswordToggle" onclick="togglePasswordVisibility()" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Password ပြရန် (Show Password)
+            </div>
+
+            <button onclick="loginUser()" style="background: var(--accent-color); margin-top: 5px;">Login</button>
+            <button onclick="signupUser()" style="background: #3b82f6; margin-top: 5px;">Sign Up (အကောင့်သစ်ဖွင့်ရန်)</button>
             <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
     </div>
@@ -259,17 +294,6 @@ HTML_PAGE = """
                 <div style="font-size: 12px; color: #facc15; margin-bottom: 5px;">Active & Pending Devices List:</div>
                 <div id="activeDeviceList" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
             </div>
-
-            <div class="card">
-                <h4>Function 1: Voice Message (Max 3s)</h4>
-                <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
-                <div id="voiceOptions" style="display:none; margin-top: 10px;">
-                    <p>Storage Duration ရွေးပါ:</p>
-                    <button onclick="sendVoice('5m')">5 Minutes</button>
-                    <button onclick="sendVoice('1h')">1 Hour</button>
-                    <button onclick="sendVoice('48h')">48 Hours</button>
-                </div>
-            </div>
         </div>
 
         <div class="right-pane" id="rightPane">
@@ -286,6 +310,15 @@ HTML_PAGE = """
         checkSession();
     };
 
+    function togglePasswordVisibility() {
+        let pwdInput = document.getElementById('loginPassword');
+        if (pwdInput.type === 'password') {
+            pwdInput.type = 'text';
+        } else {
+            pwdInput.type = 'password';
+        }
+    }
+
     function checkSession() {
         fetch('/check_session').then(res => res.json()).then(data => {
             if(data.logged_in) {
@@ -299,7 +332,6 @@ HTML_PAGE = """
                 }
                 document.getElementById('overlayDeviceId').value = devId;
 
-                // Register device with backend
                 socket.emit('register_device', { device_id: devId });
                 checkDeviceStatus();
             } else {
@@ -314,9 +346,28 @@ HTML_PAGE = """
         let email = document.getElementById('loginEmail').value.trim();
         let password = document.getElementById('loginPassword').value;
         let errDiv = document.getElementById('loginError');
-        errDiv.innerText = "Checking Google credentials... ⏳";
+        errDiv.innerText = "Checking credentials... ⏳";
 
         fetch('/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: email, password: password })
+        }).then(res => res.json()).then(data => {
+            if(data.success) {
+                checkSession();
+            } else {
+                errDiv.innerText = data.error;
+            }
+        });
+    }
+
+    function signupUser() {
+        let email = document.getElementById('loginEmail').value.trim();
+        let password = document.getElementById('loginPassword').value;
+        let errDiv = document.getElementById('loginError');
+        errDiv.innerText = "Creating account... ⏳";
+
+        fetch('/signup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: email, password: password })
@@ -341,7 +392,6 @@ HTML_PAGE = """
             let currentDev = devices.find(d => d.device_id === devId);
             let isAdmin = devices.length > 0 && devices[0].is_current_user_admin;
 
-            // Show/Hide Admin Card based on officialwinmyat@gmail.com check
             let adminCard = document.getElementById('adminControlCard');
             if(isAdmin) {
                 adminCard.style.display = 'block';
