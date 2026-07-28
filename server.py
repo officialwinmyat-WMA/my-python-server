@@ -70,10 +70,6 @@ def send_approval_email(device_id, google_account):
     except Exception as e:
         print("Email notification error:", e)
 
-@app.route('/')
-def index():
-    return render_template_string(HTML_PAGE)
-
 @app.route('/signup', methods=['POST'])
 def signup():
     data = request.json
@@ -161,7 +157,7 @@ def get_devices():
 def get_history():
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT user_info, msg_type, content, filename, store_type, timestamp FROM history ORDER BY id DESC LIMIT 50')
+    cursor.execute('SELECT user_info, msg_type, content, filename, store_type, timestamp FROM history ORDER BY id DESC')
     rows = cursor.fetchall()
     conn.close()
     
@@ -261,12 +257,13 @@ def handle_video_call(data):
 
 @socketio.on('reset_storage')
 def handle_reset():
-    conn = sqlite3.connect('wma_qq.db')
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM history')
-    conn.commit()
-    conn.close()
-    socketio.emit('storage_reset')
+    if session.get('user_email') == 'officialwinmyat@gmail.com':
+        conn = sqlite3.connect('wma_qq.db')
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM history')
+        conn.commit()
+        conn.close()
+        socketio.emit('storage_reset')
 
 
 HTML_PAGE = """
@@ -303,10 +300,10 @@ HTML_PAGE = """
         button { background: var(--accent-color); cursor: pointer; font-weight: bold; border: 2px solid #fff; }
         button:hover { opacity: 0.9; }
 
-        #historyStream { flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color); border-radius: 8px; padding: 10px; box-sizing: border-box; backdrop-filter: blur(5px); }
+        #historyStream { flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color); border-radius: 8px; padding: 10px; box-sizing: border-box; backdrop-filter: blur(5px); margin-top: 40px; }
         .history-item { padding: 10px; margin-bottom: 8px; background: rgba(255,255,255,0.08); border-left: 6px solid var(--accent-color); border-right: 2px solid var(--accent-color); border-radius: 4px; font-size: 13px; word-break: break-all; }
         
-        #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); }
+        #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none; }
         
         #videoPopup { display: none; position: fixed; top: 10%; left: 15%; width: 70%; background: rgba(30, 41, 59, 0.95); border: 3px solid var(--accent-color); border-radius: 10px; padding: 20px; z-index: 1000; box-shadow: 0 0 30px rgba(0,0,0,0.9); text-align: center; backdrop-filter: blur(15px); }
         .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; max-height: 350px; overflow-y: auto; margin: 15px 0; }
@@ -355,7 +352,7 @@ HTML_PAGE = """
     <!-- Main Application Container -->
     <div id="appContainer">
         <div id="videoPopup">
-            <h3>WMA QQ - Girl Anime Video Conference</h3>
+            <h3>WMA QQ - Video Conference (10s)</h3>
             <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: #f472b6;"></div>
             <div class="video-grid" id="videoGridContainer">
                 <div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream</div></div>
@@ -371,8 +368,8 @@ HTML_PAGE = """
             <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:#f472b6;"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
             
             <div class="card">
-                <h4>Girl Anime Themes & Backgrounds</h4>
-                <button onclick="autoGenerateSpacialTheme()">Auto Generate Girl Anime Theme</button>
+                <h4>Dynamic Spacial Themes (Spider-Man, Anime, etc.)</h4>
+                <button onclick="autoGenerateSpacialTheme()">Auto Generate Spacial Theme</button>
             </div>
 
             <!-- Admin Control Panel Card -->
@@ -383,32 +380,36 @@ HTML_PAGE = """
                 <div id="activeDeviceList" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
             </div>
 
+            <!-- Function 1: Voice Message -->
             <div class="card">
                 <h4>Function 1: Voice Message (Max 3s)</h4>
                 <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
                 <div id="voiceOptions" style="display:none; margin-top: 10px;">
-                    <p>Storage Duration ရွေးပါ:</p>
+                    <p style="font-size: 12px; margin: 5px 0;">Storage Duration ရွေးပါ:</p>
                     <button onclick="sendVoice('5m')">5 Minutes</button>
                     <button onclick="sendVoice('1h')">1 Hour</button>
                     <button onclick="sendVoice('48h')">48 Hours</button>
                 </div>
             </div>
 
+            <!-- Function 2: Video Call -->
             <div class="card">
                 <h4>Function 2: Video Call (10s)</h4>
-                <button onclick="triggerVideoCall()" style="background: #16a34a;">Call All Active Users</button>
+                <button onclick="triggerVideoCall()" style="background: #16a34a;">Call All Active Users (10s)</button>
             </div>
 
+            <!-- Function 3: Text & Universal Equation -->
             <div class="card">
                 <h4>Function 3: Text & Universal Equation</h4>
-                <textarea id="textContent" rows="3" placeholder="Equation (e.g. 5 + 5 =) or Text" oninput="solveEquation(this)"></textarea>
+                <textarea id="textContent" rows="3" placeholder="Write text or equation (e.g. 50 * 20 =)" oninput="solveEquation(this)"></textarea>
                 <button onclick="sendText()">Send Text (48h)</button>
             </div>
 
+            <!-- Function 4: File or Image -->
             <div class="card">
-                <h4>Function 4: Original File, PDF or Image</h4>
+                <h4>Function 4: Original File or Image (48h)</h4>
                 <input type="file" id="fileInput">
-                <button onclick="sendFile()">Send File / PDF / Image (48h)</button>
+                <button onclick="sendFile()">Send File / Image</button>
             </div>
         </div>
 
@@ -424,6 +425,7 @@ HTML_PAGE = """
     let mediaRecorder;
     let audioChunks = [];
     let localStream = null;
+    let videoCallTimeout = null;
 
     window.onload = function() {
         checkSession();
@@ -505,12 +507,15 @@ HTML_PAGE = """
             fetch('/check_session').then(res => res.json()).then(sessionData => {
                 let isAdmin = sessionData.is_admin;
                 let adminCard = document.getElementById('adminControlCard');
+                let resetBtn = document.getElementById('resetBtn');
                 
                 if(isAdmin) {
                     adminCard.style.display = 'block';
+                    resetBtn.style.display = 'block';
                     fetchDeviceList();
                 } else {
                     adminCard.style.display = 'none';
+                    resetBtn.style.display = 'none';
                 }
 
                 if(isAdmin || (currentDev && currentDev.status === 'approved')) {
@@ -550,8 +555,8 @@ HTML_PAGE = """
                 row.innerHTML = `<span><span class="${dotClass}"></span> <b>${d.device_id}</b> (${d.account}) [${d.status}]</span>
                     <span>
                         <button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 5px; font-size:10px; background:green;">Approve</button>
-                        <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 5px; font-size:10px; background:red;">Ban</button>
-                        <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 5px; font-size:10px; background:gray;">Remove</button>
+                        <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 5px; font-size:10px; background:orange;">Ban</button>
+                        <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 5px; font-size:10px; background:red;">Remove</button>
                     </span>`;
                 container.appendChild(row);
             });
@@ -562,16 +567,16 @@ HTML_PAGE = """
         socket.emit('admin_device_action', { device_id: devId, action: action });
     }
 
-    const girlAnimeThemes = [
-        { name: "Beautiful Anime Girl 1", url: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80" },
-        { name: "Cyberpunk Anime Princess", url: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80" },
-        { name: "Manga Aesthetic Girl", url: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80" }
+    const spacialThemes = [
+        { name: "Spider-Man Universe", url: "https://images.unsplash.com/photo-1604200213928-ba3cf4fc8436?auto=format&fit=crop&w=1920&q=80", accent: "#ef4444" },
+        { name: "Japanese Anime Art", url: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" },
+        { name: "Chinese Cyberpunk", url: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#8b5cf6" },
+        { name: "Neon Sci-Fi", url: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", accent: "#06b6d4" }
     ];
 
     function autoGenerateSpacialTheme() {
-        let theme = girlAnimeThemes[Math.floor(Math.random() * girlAnimeThemes.length)];
-        let randomAccent = '#' + Math.floor(Math.random()*16777215).toString(16);
-        document.documentElement.style.setProperty('--accent-color', randomAccent);
+        let theme = spacialThemes[Math.floor(Math.random() * spacialThemes.length)];
+        document.documentElement.style.setProperty('--accent-color', theme.accent);
         document.documentElement.style.setProperty('--bg-image', `url('${theme.url}')`);
     }
 
@@ -611,7 +616,9 @@ HTML_PAGE = """
 
     function sendVoice(duration) {
         let userEmail = document.getElementById('currentLoggedInEmail').innerText;
-        socket.emit('new_message', { type: 'voice', user: userEmail, content: window.latestBase64Audio, store: duration });
+        let devId = localStorage.getItem('device_unique_id');
+        let userInfo = `${userEmail} (${devId})`;
+        socket.emit('new_message', { type: 'voice', user: userInfo, content: window.latestBase64Audio, store: duration });
         document.getElementById('voiceOptions').style.display = "none";
     }
 
@@ -631,7 +638,9 @@ HTML_PAGE = """
         let content = document.getElementById('textContent').value.trim();
         if(!content) return;
         let userEmail = document.getElementById('currentLoggedInEmail').innerText;
-        socket.emit('new_message', { type: 'text', user: userEmail, content: content, store: '48h' });
+        let devId = localStorage.getItem('device_unique_id');
+        let userInfo = `${userEmail} (${devId})`;
+        socket.emit('new_message', { type: 'text', user: userInfo, content: content, store: '48h' });
         document.getElementById('textContent').value = '';
     }
 
@@ -643,30 +652,42 @@ HTML_PAGE = """
         reader.readAsDataURL(file);
         reader.onloadend = function() {
             let userEmail = document.getElementById('currentLoggedInEmail').innerText;
-            socket.emit('new_message', { type: 'file', user: userEmail, content: reader.result, filename: file.name, store: '48h' });
+            let devId = localStorage.getItem('device_unique_id');
+            let userInfo = `${userEmail} (${devId})`;
+            socket.emit('new_message', { type: 'file', user: userInfo, content: reader.result, filename: file.name, store: '48h' });
             fileInput.value = '';
         }
     }
 
     function triggerVideoCall() {
+        document.getElementById('callerInfo').innerText = "Video Call ခေါ်ဆိုနေသည် (10s)...";
         document.getElementById('videoPopup').style.display = 'block';
         navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
             localStream = stream;
             document.getElementById('localVideo').srcObject = stream;
         }).catch(e => alert("Camera access denied."));
         socket.emit('trigger_video_call', { user: document.getElementById('currentLoggedInEmail').innerText });
+        
+        videoCallTimeout = setTimeout(() => {
+            stopConference();
+        }, 10000);
     }
 
     socket.on('incoming_video_call', function(data) {
-        document.getElementById('callerInfo').innerText = `${data.user} မှ Video Call ခေါ်ဆိုနေပါသည်။`;
+        document.getElementById('callerInfo').innerText = `${data.user} မှ Video Call ခေါ်ဆိုနေပါသည်။ (Accept နှိပ်ပါ)`;
         document.getElementById('videoPopup').style.display = 'block';
         navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
             localStream = stream;
             document.getElementById('localVideo').srcObject = stream;
         }).catch(e => {});
+
+        videoCallTimeout = setTimeout(() => {
+            stopConference();
+        }, 10000);
     });
 
     function stopConference() {
+        if(videoCallTimeout) clearTimeout(videoCallTimeout);
         if(localStream) {
             localStream.getTracks().forEach(track => track.stop());
         }
@@ -678,13 +699,14 @@ HTML_PAGE = """
     }
 
     function resetStorage() {
-        if(confirm("သမိုင်းအချက်အလက်အားလုံးကို ဖျက်မည်မှာ သေချာပါသလား?")) {
+        if(confirm("Render server ရှိ recorded data များကို အကုန်ဖျက်မည်မှာ သေချာပါသလား?")) {
             socket.emit('reset_storage');
         }
     }
 
     socket.on('storage_reset', function() {
         document.getElementById('historyStream').innerHTML = '';
+        alert("Storage successfully cleared!");
     });
 
     socket.on('broadcast_message', function(data) {
@@ -699,14 +721,36 @@ HTML_PAGE = """
         let innerHTML = `<b>${data.user}</b> <span style="font-size:10px; color:#94a3b8;">[${data.timestamp}] (Store: ${data.store})</span><br>`;
         if(data.type === 'text') {
             innerHTML += `<p style="margin:5px 0;">${data.content}</p>`;
+            innerHTML += `<button onclick="copyText(this)" style="width:auto; padding:3px 8px; font-size:10px; margin-right:5px;">Copy</button>`;
+            innerHTML += `<button onclick="this.parentElement.remove()" style="width:auto; padding:3px 8px; font-size:10px; background:#dc2626; margin-right:5px;">Delete</button>`;
+            innerHTML += `<button onclick="alert('Store 1 month extended')" style="width:auto; padding:3px 8px; font-size:10px; background:#2563eb;">1 Month Store</button>`;
         } else if(data.type === 'voice') {
             innerHTML += `<audio controls src="${data.content}" style="width:100%; height:35px; margin-top:5px;"></audio>`;
+            innerHTML += `<a href="${data.content}" download="voice_message.mp3" style="display:inline-block; padding:3px 8px; font-size:10px; background:#16a34a; color:white; text-decoration:none; border-radius:3px; margin-right:5px; margin-top:5px;">Download MP3</a>`;
+            innerHTML += `<button onclick="this.parentElement.remove()" style="width:auto; padding:3px 8px; font-size:10px; background:#dc2626;">Delete</button>`;
         } else if(data.type === 'file') {
-            innerHTML += `<a href="${data.content}" download="${data.filename}" style="color:#f472b6;">📎 Download File: ${data.filename}</a>`;
+            innerHTML += `<a href="${data.content}" download="${data.filename}" style="color:#f472b6; display:block; margin-top:5px;">📎 Original File: ${data.filename}</a>`;
+            innerHTML += `<a href="${data.content}" download="${data.filename}" style="display:inline-block; padding:3px 8px; font-size:10px; background:#16a34a; color:white; text-decoration:none; border-radius:3px; margin-right:5px; margin-top:5px;">Save / Download</a>`;
+            innerHTML += `<button onclick="this.parentElement.remove()" style="width:auto; padding:3px 8px; font-size:10px; background:#dc2626;">Delete</button>`;
         }
         item.innerHTML = innerHTML;
         stream.prepend(item);
     }
+
+    function copyText(btn) {
+        let txt = btn.previousElementSibling.innerText;
+        navigator.clipboard.writeText(txt);
+        alert("Text copied to clipboard!");
+    }
 </script>
 </body>
 </html>
+"""
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_PAGE)
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    socketio.run(app, host='0.0.0.0', port=port)
