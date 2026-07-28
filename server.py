@@ -5,11 +5,11 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template_string, session
 
-# Python 3.11+ compatibility fix for eventlet
+# Python compatibility fix for gevent
 import sys
-import eventlet
+from gevent import monkey
 try:
-    eventlet.monkey_patch()
+    monkey.patch_all()
 except Exception:
     pass
 
@@ -18,7 +18,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "wma_qq_secure_secret_key_123")
 
 from flask_socketio import SocketIO, emit
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 # Database Initialization
 def init_db():
@@ -733,12 +733,12 @@ HTML_PAGE = """
 
     let themes = [
         "url('https://images.unsplash.com/photo-1635863138275-d9b33299780b?auto=format&fit=crop&w=1920&q=80')",
-        "url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80')",
-        "url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80')"
+        "url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80')"
     ];
+
     function autoGenerateSpacialTheme() {
         let randomTheme = themes[Math.floor(Math.random() * themes.length)];
-        document.body.style.backgroundImage = randomTheme;
+        document.documentElement.style.setProperty('--bg-image', randomTheme);
     }
 </script>
 </body>
