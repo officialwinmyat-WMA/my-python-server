@@ -46,7 +46,7 @@ def send_approval_email(device_id, google_account):
         sender_email = os.environ.get("SMTP_EMAIL", "officialwinmyat@gmail.com")
         sender_password = os.environ.get("SMTP_PASSWORD", "")
         if not sender_password:
-            return # Skip if email password not set in Render environment variables
+            return
         
         msg = MIMEText(f"New Device Access Request:\n\nDevice ID: {device_id}\nGoogle Account: {google_account}\n\nPlease go to your WMA QQ dashboard to approve or ban this device.")
         msg['Subject'] = f"WMA QQ - New Device Pending Approval: {device_id}"
@@ -87,96 +87,114 @@ HTML_PAGE = """
             color: var(--text-color); display: flex; height: 100vh; overflow: hidden; 
         }
         
-        .left-pane { width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box; background: var(--panel-bg); border-right: 2px solid rgba(255,255,255,0.2); position: relative; backdrop-filter: blur(10px); }
-        .right-pane { width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box; background: var(--stream-bg); position: relative; backdrop-filter: blur(10px); }
+        .left-pane { width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box; background: var(--panel-bg); border-right: 3px solid var(--accent-color); position: relative; backdrop-filter: blur(10px); }
+        .right-pane { width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box; background: var(--stream-bg); position: relative; backdrop-filter: blur(10px); border-left: 3px solid var(--accent-color); }
 
-        .card { background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid rgba(255,255,255,0.2); backdrop-filter: blur(5px); }
-        input, textarea, select, button { width: 100%; padding: 10px; margin: 8px 0; border-radius: 5px; border: 1px solid rgba(255,255,255,0.3); background: rgba(15, 23, 42, 0.8); color: white; box-sizing: border-box; }
-        button { background: var(--accent-color); cursor: pointer; font-weight: bold; border: none; }
+        .card { background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 2px solid var(--accent-color); backdrop-filter: blur(5px); box-shadow: 0 0 10px rgba(236,72,153,0.3); }
+        input, textarea, select, button { width: 100%; padding: 10px; margin: 8px 0; border-radius: 5px; border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.85); color: white; box-sizing: border-box; }
+        button { background: var(--accent-color); cursor: pointer; font-weight: bold; border: 2px solid #fff; }
         button:hover { opacity: 0.9; }
 
-        #historyStream { flex: 1; overflow-y: auto; background: var(--chat-bg); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; padding: 10px; box-sizing: border-box; backdrop-filter: blur(5px); }
-        .history-item { padding: 10px; margin-bottom: 8px; background: rgba(255,255,255,0.08); border-left: 4px solid var(--accent-color); border-radius: 4px; font-size: 13px; word-break: break-all; }
+        #historyStream { flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color); border-radius: 8px; padding: 10px; box-sizing: border-box; backdrop-filter: blur(5px); }
+        .history-item { padding: 10px; margin-bottom: 8px; background: rgba(255,255,255,0.08); border-left: 6px solid var(--accent-color); border-right: 2px solid var(--accent-color); border-radius: 4px; font-size: 13px; word-break: break-all; }
         .actions { margin-top: 5px; }
-        .actions button { width: auto; padding: 4px 8px; font-size: 11px; margin-right: 5px; display: inline-block; }
+        .actions button { width: auto; padding: 4px 8px; font-size: 11px; margin-right: 5px; display: inline-block; border: 1px solid #fff; }
 
-        #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; width: auto; }
+        #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); }
         .storage-warning { background-color: rgba(88, 28, 135, 0.85) !important; }
 
-        #videoPopup { display: none; position: fixed; top: 10%; left: 15%; width: 70%; background: rgba(30, 41, 59, 0.95); border: 2px solid var(--accent-color); border-radius: 10px; padding: 20px; z-index: 1000; box-shadow: 0 0 30px rgba(0,0,0,0.9); text-align: center; backdrop-filter: blur(15px); }
+        #videoPopup { display: none; position: fixed; top: 10%; left: 15%; width: 70%; background: rgba(30, 41, 59, 0.95); border: 3px solid var(--accent-color); border-radius: 10px; padding: 20px; z-index: 1000; box-shadow: 0 0 30px rgba(0,0,0,0.9); text-align: center; backdrop-filter: blur(15px); }
         .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; max-height: 350px; overflow-y: auto; margin: 15px 0; }
-        .video-box { background: rgba(0,0,0,0.6); border-radius: 8px; padding: 8px; text-align: center; border: 1px solid rgba(255,255,255,0.2); }
+        .video-box { background: rgba(0,0,0,0.6); border-radius: 8px; padding: 8px; text-align: center; border: 2px solid var(--accent-color); }
         video { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; background: #000; }
 
-        .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.15); }
+        .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
         .badge-active { height: 10px; width: 10px; background-color: #22c55e; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px #22c55e; }
         .badge-inactive { height: 10px; width: 10px; background-color: #64748b; border-radius: 50%; display: inline-block; }
+        
+        #appContainer { display: none; width: 100%; height: 100vh; }
+        #pendingOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; background: rgba(15, 23, 42, 0.95); z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 20px; }
     </style>
 </head>
 <body>
 
-    <div id="videoPopup">
-        <h3>WMA QQ - Girl Anime Video Conference</h3>
-        <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: #f472b6;"></div>
-        <div class="video-grid" id="videoGridContainer"></div>
-        <div class="actions">
-            <button onclick="acceptCallAction()" style="background: #16a34a;">Accept & Join Video</button>
-            <button onclick="stopConference()" style="background: #ca8a04;">Stop Video Conference</button>
-            <button onclick="closePopup()" style="background: #dc2626;">Close</button>
+    <!-- Pending / Ban Access Block Screen -->
+    <div id="pendingOverlay">
+        <h2 id="overlayTitle" style="color: #f472b6;">WMA QQ - Device Verification Required</h2>
+        <p id="overlayDesc" style="max-width: 500px; color: #cbd5e1; margin: 15px 0;">သင့် Device သည် Admin (officialwinmyat@gmail.com) ထံမှ Approve အတည်ပြုချက် ရယူရန် လိုအပ်နေပါသည်။</p>
+        <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px; border: 2px solid var(--accent-color); margin-bottom: 15px; width: 320px;">
+            <input type="text" id="overlayDeviceId" readonly style="text-align:center; font-weight:bold;">
+            <input type="email" id="overlayGoogleAccount" placeholder="Enter your Google Account..." style="text-align:center;">
+            <button onclick="submitRegistration()" style="background: var(--accent-color); margin-top: 10px;">Request Approval</button>
         </div>
+        <div id="overlayStatus" style="font-size: 14px; color: #facc15; font-weight: bold;">Status: Pending Approval ⏳</div>
     </div>
 
-    <div class="left-pane">
-        <h2>WMA QQ Control Panel</h2>
-        
-        <div class="card">
-            <h4>Girl Anime Themes & Backgrounds</h4>
-            <button onclick="autoGenerateSpacialTheme()">Auto Generate Girl Anime Theme</button>
-        </div>
-
-        <div class="card">
-            <h4>Device Management & Status (Render Control)</h4>
-            <input type="text" id="deviceId" readonly placeholder="Auto-Detecting Device ID...">
-            <input type="text" id="googleAccount" placeholder="Google Account (e.g. user@gmail.com)" onchange="updateDeviceRegistration()">
-            <div id="deviceApprovalStatus" style="font-size: 12px; color: #facc15; margin-top: 5px;"></div>
-            
-            <h5 style="margin: 10px 0 5px 0;">Active & Pending Devices List:</h5>
-            <div id="activeDeviceList" style="max-height: 140px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px;"></div>
-        </div>
-
-        <div class="card">
-            <h4>Function 1: Voice Message (Max 3s)</h4>
-            <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
-            <div id="voiceOptions" style="display:none; margin-top: 10px;">
-                <p>Storage Duration ရွေးပါ:</p>
-                <button onclick="sendVoice('5m')">5 Minutes</button>
-                <button onclick="sendVoice('1h')">1 Hour</button>
-                <button onclick="sendVoice('48h')">48 Hours</button>
+    <!-- Main Application Container (Shown only when approved) -->
+    <div id="appContainer" style="display: flex;">
+        <div id="videoPopup">
+            <h3>WMA QQ - Girl Anime Video Conference</h3>
+            <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: #f472b6;"></div>
+            <div class="video-grid" id="videoGridContainer"></div>
+            <div class="actions">
+                <button onclick="acceptCallAction()" style="background: #16a34a;">Accept & Join Video</button>
+                <button onclick="stopConference()" style="background: #ca8a04;">Stop Video Conference</button>
+                <button onclick="closePopup()" style="background: #dc2626;">Close</button>
             </div>
         </div>
 
-        <div class="card">
-            <h4>Function 2: Video Call (10s)</h4>
-            <button onclick="triggerVideoCall()" style="background: #16a34a;">Call All Active Users</button>
+        <div class="left-pane">
+            <h2>WMA QQ Control Panel</h2>
+            
+            <div class="card">
+                <h4>Girl Anime Themes & Backgrounds</h4>
+                <button onclick="autoGenerateSpacialTheme()">Auto Generate Girl Anime Theme</button>
+            </div>
+
+            <div class="card">
+                <h4>Device Management & Status (Render Control)</h4>
+                <input type="text" id="deviceId" readonly placeholder="Auto-Detecting Device ID...">
+                <input type="text" id="googleAccount" placeholder="Google Account (e.g. user@gmail.com)" onchange="updateDeviceRegistration()">
+                <div id="deviceApprovalStatus" style="font-size: 12px; color: #facc15; margin-top: 5px;"></div>
+                
+                <h5 style="margin: 10px 0 5px 0;">Active & Pending Devices List:</h5>
+                <div id="activeDeviceList" style="max-height: 140px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
+            </div>
+
+            <div class="card">
+                <h4>Function 1: Voice Message (Max 3s)</h4>
+                <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
+                <div id="voiceOptions" style="display:none; margin-top: 10px;">
+                    <p>Storage Duration ရွေးပါ:</p>
+                    <button onclick="sendVoice('5m')">5 Minutes</button>
+                    <button onclick="sendVoice('1h')">1 Hour</button>
+                    <button onclick="sendVoice('48h')">48 Hours</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h4>Function 2: Video Call (10s)</h4>
+                <button onclick="triggerVideoCall()" style="background: #16a34a;">Call All Active Users</button>
+            </div>
+
+            <div class="card">
+                <h4>Function 3: Text & Universal Equation</h4>
+                <textarea id="textContent" rows="4" placeholder="Equation (e.g. 5 + 5 =)" oninput="solveEquation(this)"></textarea>
+                <button onclick="sendText()">Send Text (48h)</button>
+            </div>
+
+            <div class="card">
+                <h4>Function 4: Original File, PDF or Image</h4>
+                <input type="file" id="fileInput">
+                <button onclick="sendFile()">Send File / PDF / Image (48h)</button>
+            </div>
         </div>
 
-        <div class="card">
-            <h4>Function 3: Text & Universal Equation</h4>
-            <textarea id="textContent" rows="4" placeholder="Equation (e.g. 5 + 5 =)" oninput="solveEquation(this)"></textarea>
-            <button onclick="sendText()">Send Text (48h)</button>
+        <div class="right-pane" id="rightPane">
+            <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
+            <h3>WMA QQ - Live Chat & History Stream</h3>
+            <div id="historyStream"></div>
         </div>
-
-        <div class="card">
-            <h4>Function 4: Original File, PDF or Image</h4>
-            <input type="file" id="fileInput">
-            <button onclick="sendFile()">Send File / PDF / Image (48h)</button>
-        </div>
-    </div>
-
-    <div class="right-pane" id="rightPane">
-        <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
-        <h3>WMA QQ - Live Chat & History Stream</h3>
-        <div id="historyStream"></div>
     </div>
 
 <script>
@@ -194,36 +212,76 @@ HTML_PAGE = """
             localStorage.setItem('device_unique_id', devId);
         }
         document.getElementById('deviceId').value = devId;
+        document.getElementById('overlayDeviceId').value = devId;
 
-        updateDeviceRegistration();
+        // Auto-detect Google account if available or default
+        let savedAccount = localStorage.getItem('user_google_account') || "";
+        if(savedAccount) {
+            document.getElementById('googleAccount').value = savedAccount;
+            document.getElementById('overlayGoogleAccount').value = savedAccount;
+        }
 
-        fetch('/get_history').then(res => res.json()).then(data => {
-            data.forEach(item => appendHistory(item));
-        });
-
+        checkDeviceStatus();
         fetchDeviceList();
     };
 
+    function submitRegistration() {
+        let devId = document.getElementById('overlayDeviceId').value;
+        let account = document.getElementById('overlayGoogleAccount').value.trim();
+        if(!account) {
+            alert("ကျေးဇူးပြု၍ Google Account ထည့်သွင်းပေးပါ။");
+            return;
+        }
+        localStorage.setItem('user_google_account', account);
+        document.getElementById('googleAccount').value = account;
+        socket.emit('register_device', { device_id: devId, google_account: account });
+        document.getElementById('overlayStatus').innerText = "Status: Approval request sent to officialwinmyat@gmail.com ⏳";
+    }
+
     function updateDeviceRegistration() {
         let devId = document.getElementById('deviceId').value;
-        let account = document.getElementById('googleAccount').value || "officialwinmyat@gmail.com";
-        socket.emit('register_device', { device_id: devId, google_account: account });
+        let account = document.getElementById('googleAccount').value.trim();
+        if(account) {
+            localStorage.setItem('user_google_account', account);
+            document.getElementById('overlayGoogleAccount').value = account;
+            socket.emit('register_device', { device_id: devId, google_account: account });
+        }
+    }
+
+    function checkDeviceStatus() {
+        let devId = document.getElementById('deviceId').value;
+        fetch('/get_devices').then(res => res.json()).then(devices => {
+            let currentDev = devices.find(d => d.device_id === devId);
+            if(currentDev && currentDev.status === 'approved') {
+                document.getElementById('pendingOverlay').style.display = 'none';
+                document.getElementById('appContainer').style.display = 'flex';
+                
+                // Load History only when approved
+                fetch('/get_history').then(res => res.json()).then(data => {
+                    let stream = document.getElementById('historyStream');
+                    stream.innerHTML = '';
+                    data.forEach(item => appendHistory(item));
+                });
+            } else {
+                document.getElementById('pendingOverlay').style.display = 'flex';
+                document.getElementById('appContainer').style.display = 'none';
+                if(currentDev) {
+                    let statusTxt = document.getElementById('overlayStatus');
+                    if(currentDev.status === 'banned') {
+                        statusTxt.style.color = '#f87171';
+                        statusTxt.innerText = "Status: Banned by Admin ❌";
+                    } else {
+                        statusTxt.style.color = '#facc15';
+                        statusTxt.innerText = "Status: Pending approval email sent to officialwinmyat@gmail.com ⏳";
+                    }
+                }
+            }
+        });
     }
 
     socket.on('device_status_update', function(data) {
         if(data.device_id === document.getElementById('deviceId').value) {
-            let statusDiv = document.getElementById('deviceApprovalStatus');
-            if(data.status === 'approved') {
-                statusDiv.style.color = '#4ade80';
-                statusDiv.innerText = "Status: Approved by officialwinmyat@gmail.com ✅";
-            } else if(data.status === 'banned') {
-                statusDiv.style.color = '#f87171';
-                statusDiv.innerText = "Status: Banned by Admin ❌ - Access Blocked";
-                alert("Your device has been banned or requires approval from officialwinmyat@gmail.com!");
-            } else {
-                statusDiv.style.color = '#facc15';
-                statusDiv.innerText = "Status: Pending approval email sent to officialwinmyat@gmail.com ⏳";
-            }
+            checkDeviceStatus();
         }
         fetchDeviceList();
     });
@@ -231,6 +289,7 @@ HTML_PAGE = """
     function fetchDeviceList() {
         fetch('/get_devices').then(res => res.json()).then(devices => {
             let container = document.getElementById('activeDeviceList');
+            if(!container) return;
             container.innerHTML = '';
             devices.forEach(d => {
                 let row = document.createElement('div');
@@ -353,11 +412,18 @@ HTML_PAGE = """
     }
 
     socket.on('broadcast_message', function(data) {
-        appendHistory(data);
+        let devId = document.getElementById('deviceId').value;
+        fetch('/get_devices').then(res => res.json()).then(devices => {
+            let currentDev = devices.find(d => d.device_id === devId);
+            if(currentDev && currentDev.status === 'approved') {
+                appendHistory(data);
+            }
+        });
     });
 
     function appendHistory(data) {
         let stream = document.getElementById('historyStream');
+        if(!stream) return;
         let div = document.createElement('div');
         div.className = 'history-item';
         div.id = 'msg-' + (data.id || Math.random());
@@ -369,8 +435,9 @@ HTML_PAGE = """
             div.innerHTML = `<b>${data.user}:</b> 🎵 Voice Message (${data.store})
                 <div class="actions"><audio controls src="${data.content}"></audio><a href="${data.content}" download="voice.mp3"><button>Download MP3</button></a><button onclick="deleteItem(this)">Delete</button></div>`;
         } else if(data.type === 'file') {
-            div.innerHTML = `<b>${data.user}:</b> 📁 ${data.filename}<br>
-                <a href="${data.content}" target="_blank"><img src="${data.content}" style="max-width:200px; display:block; margin:5px 0;" onerror="this.style.display='none'"></a>
+            let isImage = data.content.startsWith('data:image/');
+            let previewHtml = isImage ? `<a href="${data.content}" target="_blank"><img src="${data.content}" style="max-width:200px; display:block; margin:5px 0;" onerror="this.style.display='none'"></a>` : `<p style="color:#38bdf8; font-size:12px;">📄 Document/File attached</p>`;
+            div.innerHTML = `<b>${data.user}:</b> 📁 ${data.filename}<br>${previewHtml}
                 <div class="actions"><a href="${data.content}" download="${data.filename}"><button>Download File/PDF</button></a><button onclick="deleteItem(this)">Delete</button></div>`;
         } else if(data.type === 'video_call') {
             div.innerHTML = `<b>${data.user}</b> က Girl Anime Video Call ခေါ်နေပါသည် ။
@@ -382,7 +449,6 @@ HTML_PAGE = """
 
     function deleteItem(btn) { btn.closest('.history-item').remove(); }
 
-    // WebRTC Real Video Conference Implementation
     function openVideoPopup(user) {
         document.getElementById('callerInfo').innerText = "Connected with: " + user;
         document.getElementById('videoPopup').style.display = 'block';
@@ -394,7 +460,7 @@ HTML_PAGE = """
 
             let myBox = document.createElement('div');
             myBox.className = 'video-box';
-            myBox.innerHTML = `<p style="font-size:11px; margin:2px;">My Video</p><video autoplay muted id="localVid"></video>`;
+            myBox.innerHTML = `<p style="font-size:11px; margin:2px;">My Video (${getMeta().device})</p><video autoplay muted id="localVid"></video>`;
             myBox.querySelector('video').srcObject = stream;
             grid.appendChild(myBox);
 
@@ -424,7 +490,7 @@ HTML_PAGE = """
 
         pc.onicecandidate = event => {
             if(event.candidate) {
-                socket.emit('ice_candidate', { to: peerId, candidate: event.candidate });
+                socket.emit('ice_candidate', { to: peerId, candidate: event.candidate, from: getMeta().device });
             }
         };
 
@@ -435,6 +501,7 @@ HTML_PAGE = """
     });
 
     socket.on('offer', async function(data) {
+        if(data.to !== getMeta().device) return;
         let peerId = data.from;
         let pc = new RTCPeerConnection(rtcConfig);
         peerConnections[peerId] = pc;
@@ -453,7 +520,7 @@ HTML_PAGE = """
         };
 
         pc.onicecandidate = event => {
-            if(event.candidate) socket.emit('ice_candidate', { to: peerId, candidate: event.candidate });
+            if(event.candidate) socket.emit('ice_candidate', { to: peerId, candidate: event.candidate, from: getMeta().device });
         };
 
         await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
@@ -463,11 +530,13 @@ HTML_PAGE = """
     });
 
     socket.on('answer', async function(data) {
+        if(data.to !== getMeta().device) return;
         let pc = peerConnections[data.from];
         if(pc) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
     });
 
     socket.on('ice_candidate', async function(data) {
+        if(data.to !== getMeta().device) return;
         let pc = peerConnections[data.from];
         if(pc && data.candidate) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
     });
@@ -491,12 +560,15 @@ HTML_PAGE = """
 
     socket.on('storage_warning', function(isNearFull) {
         let pane = document.getElementById('rightPane');
-        if(isNearFull) pane.classList.add('storage-warning');
-        else pane.classList.remove('storage-warning');
+        if(pane) {
+            if(isNearFull) pane.classList.add('storage-warning');
+            else pane.classList.remove('storage-warning');
+        }
     });
 
     socket.on('force_reload_ui', function() {
-        document.getElementById('historyStream').innerHTML = '';
+        let stream = document.getElementById('historyStream');
+        if(stream) stream.innerHTML = '';
         alert("Server storage reset.");
     });
 </script>
@@ -506,14 +578,6 @@ HTML_PAGE = """
 
 @app.route('/')
 def index():
-    # Middleware: Block unapproved or banned devices
-    dev_id = request.args.get('dev')
-    conn = sqlite3.connect('wma_qq.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
-    row = cursor.fetchone()
-    conn.close()
-    
     return render_template_string(HTML_PAGE)
 
 @app.route('/get_history')
@@ -546,11 +610,10 @@ def handle_register_device(data):
         cursor.execute('INSERT INTO devices (device_id, google_account, status, last_active) VALUES (?, ?, ?, ?)',
                        (dev_id, account, 'pending', datetime.now()))
         status = 'pending'
-        # Send Email Notification to officialwinmyat@gmail.com
         send_approval_email(dev_id, account)
     else:
         status = row[0]
-        cursor.execute('UPDATE devices SET last_active = ? WHERE device_id = ?', (datetime.now(), dev_id))
+        cursor.execute('UPDATE devices SET last_active = ?, google_account = ? WHERE device_id = ?', (datetime.now(), account, dev_id))
     conn.commit()
     conn.close()
     emit('device_status_update', {'device_id': dev_id, 'status': status}, broadcast=True)
