@@ -3,7 +3,7 @@ import sqlite3
 import smtplib
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for
+from flask import Flask, request, jsonify, render_template_string, session
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "wma_qq_secure_secret_key_123")
@@ -38,7 +38,6 @@ def init_db():
             last_active DATETIME
         )
     ''')
-    # Users table for local sign up / login verification
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,6 +69,10 @@ def send_approval_email(device_id, google_account):
         server.quit()
     except Exception as e:
         print("Email notification error:", e)
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_PAGE)
 
 @app.route('/signup', methods=['POST'])
 def signup():
@@ -112,7 +115,7 @@ def login():
         session['is_admin'] = (email == 'officialwinmyat@gmail.com')
         return jsonify({"success": True, "is_admin": session['is_admin']})
     else:
-        return jsonify({"success": False, "error": "Email သို့မဟုတ် Password မှားယွင်းနေပါသည်။ (မရှိသေးပါက Sign Up လုပ်ပါ)"})
+        return jsonify({"success": False, "error": "Email သို့မဟုတ် Password မှားယွင်းနေပါသည်။"})
 
 @app.route('/logout', methods=['POST'])
 def logout():
@@ -148,16 +151,36 @@ def get_devices():
         devices.append({
             "device_id": r[0],
             "account": r[1],
-            "status": 'approved' if r[1] == 'officialwinmyat@gmail.com' else r[2], # Admin account is always approved
+            "status": 'approved' if r[1] == 'officialwinmyat@gmail.com' else r[2],
             "active": True if r[3] else False,
             "is_current_user_admin": session.get('user_email') == 'officialwinmyat@gmail.com'
         })
     return jsonify(devices)
 
+@app.route('/get_history', methods=['GET'])
+def get_history():
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_info, msg_type, content, filename, store_type, timestamp FROM history ORDER BY id DESC LIMIT 50')
+    rows = cursor.fetchall()
+    conn.close()
+    
+    history = []
+    for r in rows:
+        history.append({
+            "user": r[0],
+            "type": r[1],
+            "content": r[2],
+            "filename": r[3],
+            "store": r[4],
+            "timestamp": r[5]
+        })
+    return jsonify(history)
+
 @socketio.on('register_device')
 def handle_register_device(data):
     dev_id = data.get('device_id')
-    google_acc = session.get('user_email', data.get('google_account'))
+    google_acc = session.get('user_email', data.get('google_account', ''))
     
     if not dev_id or not google_acc:
         return
@@ -167,7 +190,6 @@ def handle_register_device(data):
     cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
     row = cursor.fetchone()
     
-    # officialwinmyat@gmail.com ဖြင့်ဝင်လာပါက ဘယ်တော့မဆို status က 'approved' ဖြစ်စေရမည်
     status = 'approved' if google_acc == 'officialwinmyat@gmail.com' else ('approved' if row and row[0] == 'approved' else 'pending')
     
     if not row:
@@ -200,6 +222,52 @@ def handle_admin_action(data):
     conn.commit()
     conn.close()
     socketio.emit('device_status_update', {'device_id': dev_id})
+
+@socketio.on('new_message')
+def handle_new_message(data):
+    user = data.get('user')
+    msg_type = data.get('type')
+    content = data.get('content')
+    filename = data.get('filename', '')
+    store = data.get('store', '48h')
+    
+    now = datetime.now()
+    if store == '5m':
+        expire_at = now + timedelta(minutes=5)
+    elif store == '1h':
+        expire_at = now + timedelta(hours=1)
+    else:
+        expire_at = now + timedelta(hours=48)
+        
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                   (user, msg_type, content, filename, store, expire_at, now.strftime('%Y-%m-%d %H:%M:%S')))
+    conn.commit()
+    conn.close()
+    
+    socketio.emit('broadcast_message', {
+        "user": user,
+        "type": msg_type,
+        "content": content,
+        "filename": filename,
+        "store": store,
+        "timestamp": now.strftime('%Y-%m-%d %H:%M:%S')
+    })
+
+@socketio.on('trigger_video_call')
+def handle_video_call(data):
+    socketio.emit('incoming_video_call', data)
+
+@socketio.on('reset_storage')
+def handle_reset():
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM history')
+    conn.commit()
+    conn.close()
+    socketio.emit('storage_reset')
+
 
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -240,6 +308,10 @@ HTML_PAGE = """
         
         #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); }
         
+        #videoPopup { display: none; position: fixed; top: 10%; left: 15%; width: 70%; background: rgba(30, 41, 59, 0.95); border: 3px solid var(--accent-color); border-radius: 10px; padding: 20px; z-index: 1000; box-shadow: 0 0 30px rgba(0,0,0,0.9); text-align: center; backdrop-filter: blur(15px); }
+        .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; max-height: 350px; overflow-y: auto; margin: 15px 0; }
+        video { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; background: #000; }
+
         .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
         .badge-active { height: 10px; width: 10px; background-color: #22c55e; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px #22c55e; }
         .badge-inactive { height: 10px; width: 10px; background-color: #64748b; border-radius: 50%; display: inline-block; }
@@ -259,9 +331,8 @@ HTML_PAGE = """
             <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
             <input type="password" id="loginPassword" placeholder="Password">
             
-            <!-- Show Password Checkbox -->
             <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0 10px 0;">
-                <input type="checkbox" id="showPasswordToggle" onclick="togglePasswordVisibility()" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Password ပြရန် (Show Password)
+                <input type="checkbox" id="showPasswordToggle" onclick="togglePasswordVisibility()" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Password ပြရန်
             </div>
 
             <button onclick="loginUser()" style="background: var(--accent-color); margin-top: 5px;">Login</button>
@@ -281,8 +352,20 @@ HTML_PAGE = """
         <button onclick="logoutUser()" style="background: #dc2626; width: auto; padding: 8px 15px;">Logout</button>
     </div>
 
-    <!-- Main Application Container (Shown only when approved) -->
+    <!-- Main Application Container -->
     <div id="appContainer">
+        <div id="videoPopup">
+            <h3>WMA QQ - Girl Anime Video Conference</h3>
+            <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: #f472b6;"></div>
+            <div class="video-grid" id="videoGridContainer">
+                <div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream</div></div>
+            </div>
+            <div class="actions" style="margin-top: 15px;">
+                <button onclick="stopConference()" style="background: #ca8a04; width: auto; padding: 8px 15px;">Stop Video Conference</button>
+                <button onclick="closePopup()" style="background: #dc2626; width: auto; padding: 8px 15px;">Close</button>
+            </div>
+        </div>
+
         <div class="left-pane">
             <h2>WMA QQ Control Panel</h2>
             <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:#f472b6;"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
@@ -292,12 +375,40 @@ HTML_PAGE = """
                 <button onclick="autoGenerateSpacialTheme()">Auto Generate Girl Anime Theme</button>
             </div>
 
-            <!-- Admin Control Panel Card (Visible ONLY for officialwinmyat@gmail.com) -->
+            <!-- Admin Control Panel Card -->
             <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
                 <h4 style="color: #f59e0b;">👑 Admin Control Panel (Official Win Myat)</h4>
                 <p style="font-size: 11px; color: #cbd5e1; margin: 0 0 8px 0;">ဤနေရာမှသာ Device များကို Approve, Ban သို့မဟုတ် Remove လုပ်နိုင်ပါသည်။</p>
                 <div style="font-size: 12px; color: #facc15; margin-bottom: 5px;">Active & Pending Devices List:</div>
                 <div id="activeDeviceList" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
+            </div>
+
+            <div class="card">
+                <h4>Function 1: Voice Message (Max 3s)</h4>
+                <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
+                <div id="voiceOptions" style="display:none; margin-top: 10px;">
+                    <p>Storage Duration ရွေးပါ:</p>
+                    <button onclick="sendVoice('5m')">5 Minutes</button>
+                    <button onclick="sendVoice('1h')">1 Hour</button>
+                    <button onclick="sendVoice('48h')">48 Hours</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h4>Function 2: Video Call (10s)</h4>
+                <button onclick="triggerVideoCall()" style="background: #16a34a;">Call All Active Users</button>
+            </div>
+
+            <div class="card">
+                <h4>Function 3: Text & Universal Equation</h4>
+                <textarea id="textContent" rows="3" placeholder="Equation (e.g. 5 + 5 =) or Text" oninput="solveEquation(this)"></textarea>
+                <button onclick="sendText()">Send Text (48h)</button>
+            </div>
+
+            <div class="card">
+                <h4>Function 4: Original File, PDF or Image</h4>
+                <input type="file" id="fileInput">
+                <button onclick="sendFile()">Send File / PDF / Image (48h)</button>
             </div>
         </div>
 
@@ -310,6 +421,9 @@ HTML_PAGE = """
 
 <script>
     const socket = io();
+    let mediaRecorder;
+    let audioChunks = [];
+    let localStream = null;
 
     window.onload = function() {
         checkSession();
@@ -317,11 +431,7 @@ HTML_PAGE = """
 
     function togglePasswordVisibility() {
         let pwdInput = document.getElementById('loginPassword');
-        if (pwdInput.type === 'password') {
-            pwdInput.type = 'text';
-        } else {
-            pwdInput.type = 'password';
-        }
+        pwdInput.type = (pwdInput.type === 'password') ? 'text' : 'password';
     }
 
     function checkSession() {
@@ -339,6 +449,12 @@ HTML_PAGE = """
 
                 socket.emit('register_device', { device_id: devId });
                 checkDeviceStatus();
+
+                fetch('/get_history').then(res => res.json()).then(historyData => {
+                    let stream = document.getElementById('historyStream');
+                    stream.innerHTML = '';
+                    historyData.reverse().forEach(item => appendHistory(item));
+                });
             } else {
                 document.getElementById('authOverlay').style.display = 'flex';
                 document.getElementById('appContainer').style.display = 'none';
@@ -358,11 +474,7 @@ HTML_PAGE = """
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: email, password: password })
         }).then(res => res.json()).then(data => {
-            if(data.success) {
-                checkSession();
-            } else {
-                errDiv.innerText = data.error;
-            }
+            if(data.success) { checkSession(); } else { errDiv.innerText = data.error; }
         });
     }
 
@@ -377,18 +489,12 @@ HTML_PAGE = """
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: email, password: password })
         }).then(res => res.json()).then(data => {
-            if(data.success) {
-                checkSession();
-            } else {
-                errDiv.innerText = data.error;
-            }
+            if(data.success) { checkSession(); } else { errDiv.innerText = data.error; }
         });
     }
 
     function logoutUser() {
-        fetch('/logout', { method: 'POST' }).then(() => {
-            window.location.reload();
-        });
+        fetch('/logout', { method: 'POST' }).then(() => { window.location.reload(); });
     }
 
     function checkDeviceStatus() {
@@ -398,8 +504,8 @@ HTML_PAGE = """
             
             fetch('/check_session').then(res => res.json()).then(sessionData => {
                 let isAdmin = sessionData.is_admin;
-
                 let adminCard = document.getElementById('adminControlCard');
+                
                 if(isAdmin) {
                     adminCard.style.display = 'block';
                     fetchDeviceList();
@@ -444,8 +550,8 @@ HTML_PAGE = """
                 row.innerHTML = `<span><span class="${dotClass}"></span> <b>${d.device_id}</b> (${d.account}) [${d.status}]</span>
                     <span>
                         <button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 5px; font-size:10px; background:green;">Approve</button>
-                        <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 5px; font-size:10px; background:orange;">Ban</button>
-                        <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 5px; font-size:10px; background:red;">Remove</button>
+                        <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 5px; font-size:10px; background:red;">Ban</button>
+                        <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 5px; font-size:10px; background:gray;">Remove</button>
                     </span>`;
                 container.appendChild(row);
             });
@@ -456,25 +562,151 @@ HTML_PAGE = """
         socket.emit('admin_device_action', { device_id: devId, action: action });
     }
 
+    const girlAnimeThemes = [
+        { name: "Beautiful Anime Girl 1", url: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80" },
+        { name: "Cyberpunk Anime Princess", url: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80" },
+        { name: "Manga Aesthetic Girl", url: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80" }
+    ];
+
     function autoGenerateSpacialTheme() {
-        alert("Anime theme generated!");
+        let theme = girlAnimeThemes[Math.floor(Math.random() * girlAnimeThemes.length)];
+        let randomAccent = '#' + Math.floor(Math.random()*16777215).toString(16);
+        document.documentElement.style.setProperty('--accent-color', randomAccent);
+        document.documentElement.style.setProperty('--bg-image', `url('${theme.url}')`);
+    }
+
+    let isRecording = false;
+    async function toggleRecordVoice() {
+        let btn = document.getElementById('recBtn');
+        if (!isRecording) {
+            try {
+                let stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+                mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                mediaRecorder.onstop = () => {
+                    let audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
+                    let reader = new FileReader();
+                    reader.readAsDataURL(audioBlob);
+                    reader.onloadend = function() {
+                        window.latestBase64Audio = reader.result;
+                        document.getElementById('voiceOptions').style.display = "block";
+                    };
+                };
+                mediaRecorder.start();
+                isRecording = true;
+                btn.style.background = "#dc2626";
+                btn.innerText = "Recording... (Max 3s)";
+                setTimeout(() => {
+                    if(isRecording) {
+                        mediaRecorder.stop();
+                        isRecording = false;
+                        btn.style.background = "";
+                        btn.innerText = "Record Voice (3s)";
+                    }
+                }, 3000);
+            } catch(e) { alert("Microphone access denied."); }
+        }
+    }
+
+    function sendVoice(duration) {
+        let userEmail = document.getElementById('currentLoggedInEmail').innerText;
+        socket.emit('new_message', { type: 'voice', user: userEmail, content: window.latestBase64Audio, store: duration });
+        document.getElementById('voiceOptions').style.display = "none";
+    }
+
+    function solveEquation(el) {
+        let val = el.value;
+        if(val.includes("=")) {
+            let parts = val.split("=");
+            let expr = parts[0].trim();
+            try {
+                let res = eval(expr);
+                el.value = expr + " = " + res;
+            } catch(e) {}
+        }
+    }
+
+    function sendText() {
+        let content = document.getElementById('textContent').value.trim();
+        if(!content) return;
+        let userEmail = document.getElementById('currentLoggedInEmail').innerText;
+        socket.emit('new_message', { type: 'text', user: userEmail, content: content, store: '48h' });
+        document.getElementById('textContent').value = '';
+    }
+
+    function sendFile() {
+        let fileInput = document.getElementById('fileInput');
+        if(fileInput.files.length === 0) { alert("ဖိုင်တစ်ခု ရွေးချယ်ပါ။"); return; }
+        let file = fileInput.files[0];
+        let reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onloadend = function() {
+            let userEmail = document.getElementById('currentLoggedInEmail').innerText;
+            socket.emit('new_message', { type: 'file', user: userEmail, content: reader.result, filename: file.name, store: '48h' });
+            fileInput.value = '';
+        }
+    }
+
+    function triggerVideoCall() {
+        document.getElementById('videoPopup').style.display = 'block';
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+            localStream = stream;
+            document.getElementById('localVideo').srcObject = stream;
+        }).catch(e => alert("Camera access denied."));
+        socket.emit('trigger_video_call', { user: document.getElementById('currentLoggedInEmail').innerText });
+    }
+
+    socket.on('incoming_video_call', function(data) {
+        document.getElementById('callerInfo').innerText = `${data.user} မှ Video Call ခေါ်ဆိုနေပါသည်။`;
+        document.getElementById('videoPopup').style.display = 'block';
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+            localStream = stream;
+            document.getElementById('localVideo').srcObject = stream;
+        }).catch(e => {});
+    });
+
+    function stopConference() {
+        if(localStream) {
+            localStream.getTracks().forEach(track => track.stop());
+        }
+        document.getElementById('videoPopup').style.display = 'none';
+    }
+
+    function closePopup() {
+        stopConference();
     }
 
     function resetStorage() {
-        if(confirm("Are you sure you want to reset storage?")) {
-            localStorage.clear();
-            window.location.reload();
+        if(confirm("သမိုင်းအချက်အလက်အားလုံးကို ဖျက်မည်မှာ သေချာပါသလား?")) {
+            socket.emit('reset_storage');
         }
+    }
+
+    socket.on('storage_reset', function() {
+        document.getElementById('historyStream').innerHTML = '';
+    });
+
+    socket.on('broadcast_message', function(data) {
+        appendHistory(data);
+    });
+
+    function appendHistory(data) {
+        let stream = document.getElementById('historyStream');
+        let item = document.createElement('div');
+        item.className = 'history-item';
+        
+        let innerHTML = `<b>${data.user}</b> <span style="font-size:10px; color:#94a3b8;">[${data.timestamp}] (Store: ${data.store})</span><br>`;
+        if(data.type === 'text') {
+            innerHTML += `<p style="margin:5px 0;">${data.content}</p>`;
+        } else if(data.type === 'voice') {
+            innerHTML += `<audio controls src="${data.content}" style="width:100%; height:35px; margin-top:5px;"></audio>`;
+        } else if(data.type === 'file') {
+            innerHTML += `<a href="${data.content}" download="${data.filename}" style="color:#f472b6;">📎 Download File: ${data.filename}</a>`;
+        }
+        item.innerHTML = innerHTML;
+        stream.prepend(item);
     }
 </script>
 </body>
 </html>
-"""
-
-@app.route('/')
-def index():
-    return render_template_string(HTML_PAGE)
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    socketio.run(app, host='0.0.0.0', port=port)
