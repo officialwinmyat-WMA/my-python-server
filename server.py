@@ -122,10 +122,13 @@ def logout():
 @app.route('/check_session', methods=['GET'])
 def check_session():
     if 'user_email' in session:
+        email = session['user_email']
+        is_admin = (email == 'officialwinmyat@gmail.com')
+        session['is_admin'] = is_admin
         return jsonify({
             "logged_in": True,
-            "email": session['user_email'],
-            "is_admin": session.get('is_admin', False)
+            "email": email,
+            "is_admin": is_admin
         })
     return jsonify({"logged_in": False})
 
@@ -145,9 +148,9 @@ def get_devices():
         devices.append({
             "device_id": r[0],
             "account": r[1],
-            "status": r[2],
+            "status": 'approved' if r[1] == 'officialwinmyat@gmail.com' else r[2], # Admin account is always approved
             "active": True if r[3] else False,
-            "is_current_user_admin": session.get('is_admin', False)
+            "is_current_user_admin": session.get('user_email') == 'officialwinmyat@gmail.com'
         })
     return jsonify(devices)
 
@@ -164,16 +167,18 @@ def handle_register_device(data):
     cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
     row = cursor.fetchone()
     
+    # officialwinmyat@gmail.com ဖြင့်ဝင်လာပါက ဘယ်တော့မဆို status က 'approved' ဖြစ်စေရမည်
+    status = 'approved' if google_acc == 'officialwinmyat@gmail.com' else ('approved' if row and row[0] == 'approved' else 'pending')
+    
     if not row:
-        status = 'approved' if google_acc == 'officialwinmyat@gmail.com' else 'pending'
         cursor.execute('INSERT INTO devices (device_id, google_account, status, last_active) VALUES (?, ?, ?, ?)',
                        (dev_id, google_acc, status, datetime.now()))
         conn.commit()
-        if status == 'pending':
+        if status == 'pending' and google_acc != 'officialwinmyat@gmail.com':
             send_approval_email(dev_id, google_acc)
     else:
-        cursor.execute('UPDATE devices SET google_account = ?, last_active = ? WHERE device_id = ?',
-                       (google_acc, datetime.now(), dev_id))
+        cursor.execute('UPDATE devices SET google_account = ?, status = ?, last_active = ? WHERE device_id = ?',
+                       (google_acc, status, datetime.now(), dev_id))
         conn.commit()
     conn.close()
     socketio.emit('device_status_update', {'device_id': dev_id})
@@ -390,33 +395,36 @@ HTML_PAGE = """
         let devId = localStorage.getItem('device_unique_id');
         fetch('/get_devices').then(res => res.json()).then(devices => {
             let currentDev = devices.find(d => d.device_id === devId);
-            let isAdmin = devices.length > 0 && devices[0].is_current_user_admin;
+            
+            fetch('/check_session').then(res => res.json()).then(sessionData => {
+                let isAdmin = sessionData.is_admin;
 
-            let adminCard = document.getElementById('adminControlCard');
-            if(isAdmin) {
-                adminCard.style.display = 'block';
-                fetchDeviceList();
-            } else {
-                adminCard.style.display = 'none';
-            }
+                let adminCard = document.getElementById('adminControlCard');
+                if(isAdmin) {
+                    adminCard.style.display = 'block';
+                    fetchDeviceList();
+                } else {
+                    adminCard.style.display = 'none';
+                }
 
-            if(currentDev && currentDev.status === 'approved') {
-                document.getElementById('pendingOverlay').style.display = 'none';
-                document.getElementById('appContainer').style.display = 'flex';
-            } else {
-                document.getElementById('pendingOverlay').style.display = 'flex';
-                document.getElementById('appContainer').style.display = 'none';
-                if(currentDev) {
-                    let statusTxt = document.getElementById('overlayStatus');
-                    if(currentDev.status === 'banned') {
-                        statusTxt.style.color = '#f87171';
-                        statusTxt.innerText = "Status: Banned by Admin ❌";
-                    } else {
-                        statusTxt.style.color = '#facc15';
-                        statusTxt.innerText = "Status: Pending approval from officialwinmyat@gmail.com ⏳";
+                if(isAdmin || (currentDev && currentDev.status === 'approved')) {
+                    document.getElementById('pendingOverlay').style.display = 'none';
+                    document.getElementById('appContainer').style.display = 'flex';
+                } else {
+                    document.getElementById('pendingOverlay').style.display = 'flex';
+                    document.getElementById('appContainer').style.display = 'none';
+                    if(currentDev) {
+                        let statusTxt = document.getElementById('overlayStatus');
+                        if(currentDev.status === 'banned') {
+                            statusTxt.style.color = '#f87171';
+                            statusTxt.innerText = "Status: Banned by Admin ❌";
+                        } else {
+                            statusTxt.style.color = '#facc15';
+                            statusTxt.innerText = "Status: Pending approval from officialwinmyat@gmail.com ⏳";
+                        }
                     }
                 }
-            }
+            });
         });
     }
 
@@ -436,8 +444,8 @@ HTML_PAGE = """
                 row.innerHTML = `<span><span class="${dotClass}"></span> <b>${d.device_id}</b> (${d.account}) [${d.status}]</span>
                     <span>
                         <button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 5px; font-size:10px; background:green;">Approve</button>
-                        <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 5px; font-size:10px; background:red;">Ban</button>
-                        <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 5px; font-size:10px; background:gray;">Remove</button>
+                        <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 5px; font-size:10px; background:orange;">Ban</button>
+                        <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 5px; font-size:10px; background:red;">Remove</button>
                     </span>`;
                 container.appendChild(row);
             });
@@ -448,16 +456,15 @@ HTML_PAGE = """
         socket.emit('admin_device_action', { device_id: devId, action: action });
     }
 
-    const girlAnimeThemes = [
-        { name: "Beautiful Anime Girl 1", url: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80" },
-        { name: "Cyberpunk Anime Princess", url: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80" }
-    ];
-
     function autoGenerateSpacialTheme() {
-        let theme = girlAnimeThemes[Math.floor(Math.random() * girlAnimeThemes.length)];
-        let randomAccent = '#' + Math.floor(Math.random()*16777215).toString(16);
-        document.documentElement.style.setProperty('--accent-color', randomAccent);
-        document.documentElement.style.setProperty('--bg-image', `url('${theme.url}')`);
+        alert("Anime theme generated!");
+    }
+
+    function resetStorage() {
+        if(confirm("Are you sure you want to reset storage?")) {
+            localStorage.clear();
+            window.location.reload();
+        }
     }
 </script>
 </body>
@@ -469,4 +476,5 @@ def index():
     return render_template_string(HTML_PAGE)
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    socketio.run(app, host='0.0.0.0', port=port)
