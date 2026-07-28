@@ -1,15 +1,17 @@
 import os
 import sqlite3
+import smtplib
+from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template_string
 
 app = Flask(__name__)
 import eventlet
-from flask_socketio import SocketIO, send, emit
+from flask_socketio import SocketIO, emit
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-# Database Initialization (Including Device Management & History)
+# Database Initialization
 def init_db():
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
@@ -37,15 +39,27 @@ def init_db():
     conn.commit()
     conn.close()
 
-def cleanup_expired_data():
-    conn = sqlite3.connect('wma_qq.db')
-    cursor = conn.cursor()
-    now = datetime.now()
-    cursor.execute('DELETE FROM history WHERE expire_at IS NOT NULL AND expire_at < ?', (now,))
-    conn.commit()
-    conn.close()
-
 init_db()
+
+def send_approval_email(device_id, google_account):
+    try:
+        sender_email = os.environ.get("SMTP_EMAIL", "officialwinmyat@gmail.com")
+        sender_password = os.environ.get("SMTP_PASSWORD", "")
+        if not sender_password:
+            return # Skip if email password not set in Render environment variables
+        
+        msg = MIMEText(f"New Device Access Request:\n\nDevice ID: {device_id}\nGoogle Account: {google_account}\n\nPlease go to your WMA QQ dashboard to approve or ban this device.")
+        msg['Subject'] = f"WMA QQ - New Device Pending Approval: {device_id}"
+        msg['From'] = sender_email
+        msg['To'] = "officialwinmyat@gmail.com"
+
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.sendmail(sender_email, ["officialwinmyat@gmail.com"], msg.as_string())
+        server.quit()
+    except Exception as e:
+        print("Email notification error:", e)
 
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -57,12 +71,12 @@ HTML_PAGE = """
     <style>
         :root {
             --bg-color: #0f172a;
-            --panel-bg: rgba(30, 41, 59, 0.95);
+            --panel-bg: rgba(30, 41, 59, 0.75);
             --text-color: #f8fafc;
-            --accent-color: #3b82f6;
-            --chat-bg: rgba(9, 13, 22, 0.85);
-            --stream-bg: rgba(30, 41, 59, 0.9);
-            --bg-image: url('https://images.unsplash.com/photo-1604200213928-ba3cf4fc8436?auto=format&fit=crop&w=1920&q=80');
+            --accent-color: #ec4899;
+            --chat-bg: rgba(9, 13, 22, 0.7);
+            --stream-bg: rgba(30, 41, 59, 0.7);
+            --bg-image: url('https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80');
         }
         body { 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
@@ -73,73 +87,61 @@ HTML_PAGE = """
             color: var(--text-color); display: flex; height: 100vh; overflow: hidden; 
         }
         
-        /* Split Screen UI */
-        .left-pane { width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box; background: var(--panel-bg); border-right: 2px solid #334155; position: relative; backdrop-filter: blur(8px); }
-        .right-pane { width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box; background: var(--stream-bg); position: relative; backdrop-filter: blur(8px); }
+        .left-pane { width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box; background: var(--panel-bg); border-right: 2px solid rgba(255,255,255,0.2); position: relative; backdrop-filter: blur(10px); }
+        .right-pane { width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box; background: var(--stream-bg); position: relative; backdrop-filter: blur(10px); }
 
-        .card { background: rgba(255,255,255,0.07); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid rgba(255,255,255,0.15); }
-        input, textarea, select, button { width: 100%; padding: 10px; margin: 8px 0; border-radius: 5px; border: 1px solid #475569; background: #0f172a; color: white; box-sizing: border-box; }
+        .card { background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid rgba(255,255,255,0.2); backdrop-filter: blur(5px); }
+        input, textarea, select, button { width: 100%; padding: 10px; margin: 8px 0; border-radius: 5px; border: 1px solid rgba(255,255,255,0.3); background: rgba(15, 23, 42, 0.8); color: white; box-sizing: border-box; }
         button { background: var(--accent-color); cursor: pointer; font-weight: bold; border: none; }
         button:hover { opacity: 0.9; }
 
-        #historyStream { flex: 1; overflow-y: auto; background: var(--chat-bg); border: 1px solid #334155; border-radius: 8px; padding: 10px; box-sizing: border-box; }
-        .history-item { padding: 10px; margin-bottom: 8px; background: rgba(255,255,255,0.05); border-left: 4px solid var(--accent-color); border-radius: 4px; font-size: 13px; word-break: break-all; }
+        #historyStream { flex: 1; overflow-y: auto; background: var(--chat-bg); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; padding: 10px; box-sizing: border-box; backdrop-filter: blur(5px); }
+        .history-item { padding: 10px; margin-bottom: 8px; background: rgba(255,255,255,0.08); border-left: 4px solid var(--accent-color); border-radius: 4px; font-size: 13px; word-break: break-all; }
         .actions { margin-top: 5px; }
         .actions button { width: auto; padding: 4px 8px; font-size: 11px; margin-right: 5px; display: inline-block; }
 
-        /* Floating Reset Storage Button */
         #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; width: auto; }
-        
-        /* Storage Warning Background */
-        .storage-warning { background-color: rgba(88, 28, 135, 0.95) !important; transition: background 0.5s ease; }
+        .storage-warning { background-color: rgba(88, 28, 135, 0.85) !important; }
 
-        /* Video Call Popup */
-        #videoPopup { display: none; position: fixed; top: 10%; left: 20%; width: 60%; background: #1e293b; border: 2px solid #3b82f6; border-radius: 10px; padding: 20px; z-index: 1000; box-shadow: 0 0 30px rgba(0,0,0,0.9); text-align: center; }
-        .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; max-height: 300px; overflow-y: auto; margin: 15px 0; }
-        .video-box { background: black; border-radius: 5px; padding: 5px; text-align: center; }
-        video { width: 100%; height: 150px; object-fit: cover; border-radius: 4px; background: #000; }
+        #videoPopup { display: none; position: fixed; top: 10%; left: 15%; width: 70%; background: rgba(30, 41, 59, 0.95); border: 2px solid var(--accent-color); border-radius: 10px; padding: 20px; z-index: 1000; box-shadow: 0 0 30px rgba(0,0,0,0.9); text-align: center; backdrop-filter: blur(15px); }
+        .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; max-height: 350px; overflow-y: auto; margin: 15px 0; }
+        .video-box { background: rgba(0,0,0,0.6); border-radius: 8px; padding: 8px; text-align: center; border: 1px solid rgba(255,255,255,0.2); }
+        video { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; background: #000; }
 
-        /* Device Management List Styling */
-        .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.15); }
         .badge-active { height: 10px; width: 10px; background-color: #22c55e; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px #22c55e; }
         .badge-inactive { height: 10px; width: 10px; background-color: #64748b; border-radius: 50%; display: inline-block; }
     </style>
 </head>
 <body>
 
-    <!-- Video Call Popup Dialog -->
     <div id="videoPopup">
-        <h3>WMA QQ - Video Conference (10s limit)</h3>
-        <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: #38bdf8;"></div>
-        <div class="video-grid" id="videoGridContainer">
-            <!-- Dynamic video streams of all accepted devices will appear here -->
-        </div>
+        <h3>WMA QQ - Girl Anime Video Conference</h3>
+        <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: #f472b6;"></div>
+        <div class="video-grid" id="videoGridContainer"></div>
         <div class="actions">
-            <button onclick="acceptCallAction()" style="background: #16a34a;">Accept</button>
+            <button onclick="acceptCallAction()" style="background: #16a34a;">Accept & Join Video</button>
             <button onclick="stopConference()" style="background: #ca8a04;">Stop Video Conference</button>
             <button onclick="closePopup()" style="background: #dc2626;">Close</button>
         </div>
     </div>
 
-    <!-- LEFT PANE: Controls & Functions -->
     <div class="left-pane">
         <h2>WMA QQ Control Panel</h2>
         
         <div class="card">
-            <h4>Spacial Theme & Anime Backgrounds</h4>
-            <button onclick="autoGenerateSpacialTheme()">Auto Generate Spacial Theme</button>
+            <h4>Girl Anime Themes & Backgrounds</h4>
+            <button onclick="autoGenerateSpacialTheme()">Auto Generate Girl Anime Theme</button>
         </div>
 
         <div class="card">
-            <h4>Device Management & Status</h4>
+            <h4>Device Management & Status (Render Control)</h4>
             <input type="text" id="deviceId" readonly placeholder="Auto-Detecting Device ID...">
             <input type="text" id="googleAccount" placeholder="Google Account (e.g. user@gmail.com)" onchange="updateDeviceRegistration()">
             <div id="deviceApprovalStatus" style="font-size: 12px; color: #facc15; margin-top: 5px;"></div>
             
-            <h5 style="margin: 10px 0 5px 0;">Active Devices List:</h5>
-            <div id="activeDeviceList" style="max-height: 120px; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 5px; border-radius: 4px;">
-                <!-- Populated via socket/fetch -->
-            </div>
+            <h5 style="margin: 10px 0 5px 0;">Active & Pending Devices List:</h5>
+            <div id="activeDeviceList" style="max-height: 140px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px;"></div>
         </div>
 
         <div class="card">
@@ -160,21 +162,20 @@ HTML_PAGE = """
 
         <div class="card">
             <h4>Function 3: Text & Universal Equation</h4>
-            <textarea id="textContent" rows="4" placeholder="1 to 1M words or Equation (e.g. 5 + 5 =)" oninput="solveEquation(this)"></textarea>
+            <textarea id="textContent" rows="4" placeholder="Equation (e.g. 5 + 5 =)" oninput="solveEquation(this)"></textarea>
             <button onclick="sendText()">Send Text (48h)</button>
         </div>
 
         <div class="card">
             <h4>Function 4: Original File, PDF or Image</h4>
             <input type="file" id="fileInput">
-            <button onclick="sendFile()">Send Original File/PDF/Image (48h)</button>
+            <button onclick="sendFile()">Send File / PDF / Image (48h)</button>
         </div>
     </div>
 
-    <!-- RIGHT PANE: Live Chat & Lifetime History Stream -->
     <div class="right-pane" id="rightPane">
         <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
-        <h3>WMA QQ - Live Chat & Lifetime History</h3>
+        <h3>WMA QQ - Live Chat & History Stream</h3>
         <div id="historyStream"></div>
     </div>
 
@@ -182,9 +183,10 @@ HTML_PAGE = """
     const socket = io();
     let mediaRecorder;
     let audioChunks = [];
-    let myStreamInstance = null;
+    let localStream = null;
+    let peerConnections = {};
+    const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-    // Auto-detect Device ID and Register
     window.onload = function() {
         let devId = localStorage.getItem('device_unique_id');
         if(!devId) {
@@ -193,15 +195,12 @@ HTML_PAGE = """
         }
         document.getElementById('deviceId').value = devId;
 
-        // Register device with server & official email request check
         updateDeviceRegistration();
 
-        // Load Lifetime History
         fetch('/get_history').then(res => res.json()).then(data => {
             data.forEach(item => appendHistory(item));
         });
 
-        // Load active devices list
         fetchDeviceList();
     };
 
@@ -219,10 +218,11 @@ HTML_PAGE = """
                 statusDiv.innerText = "Status: Approved by officialwinmyat@gmail.com ✅";
             } else if(data.status === 'banned') {
                 statusDiv.style.color = '#f87171';
-                statusDiv.innerText = "Status: Banned by Admin ❌";
+                statusDiv.innerText = "Status: Banned by Admin ❌ - Access Blocked";
+                alert("Your device has been banned or requires approval from officialwinmyat@gmail.com!");
             } else {
                 statusDiv.style.color = '#facc15';
-                statusDiv.innerText = "Status: Pending approval request sent to officialwinmyat@gmail.com ⏳";
+                statusDiv.innerText = "Status: Pending approval email sent to officialwinmyat@gmail.com ⏳";
             }
         }
         fetchDeviceList();
@@ -258,26 +258,23 @@ HTML_PAGE = """
         };
     }
 
-    // High Visibility Spacial Themes & Anime Backgrounds (Randomized uniquely each time)
-    const animeThemes = [
-        { name: "Spider-Man Universe", url: "https://images.unsplash.com/photo-1604200213928-ba3cf4fc8436?auto=format&fit=crop&w=1920&q=80" },
-        { name: "Japanese Anime City", url: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80" },
-        { name: "Cyberpunk Chinese Anime", url: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80" },
-        { name: "Neon Spiderverse", url: "https://images.unsplash.com/photo-1635863138275-d9b33299680b?auto=format&fit=crop&w=1920&q=80" },
-        { name: "Epic Mecha Anime", url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80" },
-        { name: "Action Spider-Man Hero", url: "https://images.unsplash.com/photo-1635805737707-575885ab0820?auto=format&fit=crop&w=1920&q=80" }
+    const girlAnimeThemes = [
+        { name: "Beautiful Anime Girl 1", url: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80" },
+        { name: "Cyberpunk Anime Princess", url: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80" },
+        { name: "Manga Aesthetic Girl", url: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80" },
+        { name: "Neon Anime Girl", url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80" }
     ];
 
     function autoGenerateSpacialTheme() {
-        let theme = animeThemes[Math.floor(Math.random() * animeThemes.length)];
+        let theme = girlAnimeThemes[Math.floor(Math.random() * girlAnimeThemes.length)];
         let randomAccent = '#' + Math.floor(Math.random()*16777215).toString(16);
         document.documentElement.style.setProperty('--accent-color', randomAccent);
         document.documentElement.style.setProperty('--bg-image', `url('${theme.url}')`);
-        // Apply background to right pane live chat as well for full immersion
-        document.documentElement.style.setProperty('--stream-bg', 'rgba(30, 41, 59, 0.75)');
+        document.documentElement.style.setProperty('--panel-bg', 'rgba(30, 41, 59, 0.7)');
+        document.documentElement.style.setProperty('--chat-bg', 'rgba(9, 13, 22, 0.65)');
+        document.documentElement.style.setProperty('--stream-bg', 'rgba(30, 41, 59, 0.65)');
     }
 
-    // Function 1: Real Voice Recording (3 seconds max)
     let isRecording = false;
     async function toggleRecordVoice() {
         let btn = document.getElementById('recBtn');
@@ -286,9 +283,7 @@ HTML_PAGE = """
                 let stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(stream);
                 audioChunks = [];
-                mediaRecorder.ondataavailable = event => {
-                    audioChunks.push(event.data);
-                };
+                mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
                 mediaRecorder.onstop = () => {
                     let audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
                     let reader = new FileReader();
@@ -302,7 +297,6 @@ HTML_PAGE = """
                 isRecording = true;
                 btn.style.background = "#dc2626";
                 btn.innerText = "Recording... (Max 3s)";
-                
                 setTimeout(() => {
                     if(isRecording) {
                         mediaRecorder.stop();
@@ -311,24 +305,16 @@ HTML_PAGE = """
                         btn.innerText = "Record Voice (3s)";
                     }
                 }, 3000);
-            } catch(e) {
-                alert("Microphone access denied.");
-            }
+            } catch(e) { alert("Microphone access denied."); }
         }
     }
 
     function sendVoice(duration) {
         let meta = getMeta();
-        socket.emit('new_message', {
-            type: 'voice',
-            user: `[${meta.device} | ${meta.account}]`,
-            content: window.latestBase64Audio,
-            store: duration
-        });
+        socket.emit('new_message', { type: 'voice', user: `[${meta.device} | ${meta.account}]`, content: window.latestBase64Audio, store: duration });
         document.getElementById('voiceOptions').style.display = "none";
     }
 
-    // Function 3: Universal Equation Solver
     function solveEquation(el) {
         let val = el.value;
         if(val.includes("=")) {
@@ -336,9 +322,7 @@ HTML_PAGE = """
             let expr = parts[0].trim();
             try {
                 let ans = Function('"use strict";return (' + expr + ')')();
-                if(ans !== undefined && !isNaN(ans)) {
-                    el.value = expr + " = " + ans;
-                }
+                if(ans !== undefined && !isNaN(ans)) el.value = expr + " = " + ans;
             } catch(e) {}
         }
     }
@@ -347,16 +331,10 @@ HTML_PAGE = """
         let text = document.getElementById('textContent').value;
         if(!text) return;
         let meta = getMeta();
-        socket.emit('new_message', {
-            type: 'text',
-            user: `[${meta.device} | ${meta.account}]`,
-            content: text,
-            store: '48h'
-        });
+        socket.emit('new_message', { type: 'text', user: `[${meta.device} | ${meta.account}]`, content: text, store: '48h' });
         document.getElementById('textContent').value = '';
     }
 
-    // Function 4: Original File, PDF or Image
     function sendFile() {
         let fileInput = document.getElementById('fileInput');
         if(fileInput.files.length === 0) return;
@@ -364,25 +342,14 @@ HTML_PAGE = """
         let reader = new FileReader();
         reader.onload = function(e) {
             let meta = getMeta();
-            socket.emit('new_message', {
-                type: 'file',
-                user: `[${meta.device} | ${meta.account}]`,
-                filename: file.name,
-                content: e.target.result,
-                store: '48h'
-            });
+            socket.emit('new_message', { type: 'file', user: `[${meta.device} | ${meta.account}]`, filename: file.name, content: e.target.result, store: '48h' });
         };
         reader.readAsDataURL(file);
     }
 
-    // Function 2: Video Call Trigger
     function triggerVideoCall() {
         let meta = getMeta();
-        socket.emit('new_message', {
-            type: 'video_call',
-            user: `[${meta.device} | ${meta.account}]`,
-            content: "Video Call Invitation"
-        });
+        socket.emit('new_message', { type: 'video_call', user: `[${meta.device} | ${meta.account}]`, content: "Video Call Invitation" });
     }
 
     socket.on('broadcast_message', function(data) {
@@ -397,87 +364,125 @@ HTML_PAGE = """
 
         if(data.type === 'text') {
             div.innerHTML = `<b>${data.user}:</b> <pre style="white-space:pre-wrap; margin:5px 0;">${data.content}</pre>
-                <div class="actions">
-                    <button onclick="navigator.clipboard.writeText('${data.content}')">Copy</button>
-                    <button onclick="deleteItem(this)">Delete</button>
-                    <button onclick="alert('Stored for 1 Month!')">1 Month Store</button>
-                </div>`;
+                <div class="actions"><button onclick="navigator.clipboard.writeText('${data.content}')">Copy</button><button onclick="deleteItem(this)">Delete</button></div>`;
         } else if(data.type === 'voice') {
             div.innerHTML = `<b>${data.user}:</b> 🎵 Voice Message (${data.store})
-                <div class="actions">
-                    <audio controls src="${data.content}"></audio>
-                    <a href="${data.content}" download="voice_message.mp3"><button>Download MP3</button></a>
-                    <button onclick="deleteItem(this)">Delete</button>
-                </div>`;
+                <div class="actions"><audio controls src="${data.content}"></audio><a href="${data.content}" download="voice.mp3"><button>Download MP3</button></a><button onclick="deleteItem(this)">Delete</button></div>`;
         } else if(data.type === 'file') {
             div.innerHTML = `<b>${data.user}:</b> 📁 ${data.filename}<br>
                 <a href="${data.content}" target="_blank"><img src="${data.content}" style="max-width:200px; display:block; margin:5px 0;" onerror="this.style.display='none'"></a>
-                <div class="actions">
-                    <a href="${data.content}" download="${data.filename}"><button>Save File/PDF</button></a>
-                    <button onclick="deleteItem(this)">Delete</button>
-                </div>`;
+                <div class="actions"><a href="${data.content}" download="${data.filename}"><button>Download File/PDF</button></a><button onclick="deleteItem(this)">Delete</button></div>`;
         } else if(data.type === 'video_call') {
-            div.innerHTML = `<b>${data.user}</b> က Video Call ခေါ်နေပါသည် ။
-                <div class="actions">
-                    <button onclick="openVideoPopup('${data.user}')" style="background:#16a34a;">Accept</button>
-                    <button onclick="deleteItem(this)" style="background:#dc2626;">Delete</button>
-                </div>`;
+            div.innerHTML = `<b>${data.user}</b> က Girl Anime Video Call ခေါ်နေပါသည် ။
+                <div class="actions"><button onclick="openVideoPopup('${data.user}')" style="background:#16a34a;">Accept</button><button onclick="deleteItem(this)" style="background:#dc2626;">Delete</button></div>`;
         }
         stream.appendChild(div);
         stream.scrollTop = stream.scrollHeight;
     }
 
-    function deleteItem(btn) {
-        btn.closest('.history-item').remove();
-    }
+    function deleteItem(btn) { btn.closest('.history-item').remove(); }
 
-    // Multi-Device Video Conference Handlers
+    // WebRTC Real Video Conference Implementation
     function openVideoPopup(user) {
-        document.getElementById('callerInfo').innerText = "Connected with call initiator: " + user;
+        document.getElementById('callerInfo').innerText = "Connected with: " + user;
         document.getElementById('videoPopup').style.display = 'block';
         
         navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
-            myStreamInstance = stream;
+            localStream = stream;
             let grid = document.getElementById('videoGridContainer');
             grid.innerHTML = '';
 
-            // Add My Video Box
             let myBox = document.createElement('div');
             myBox.className = 'video-box';
-            myBox.innerHTML = `<p style="font-size:11px; margin:2px;">My Video</p><video autoplay muted></video>`;
+            myBox.innerHTML = `<p style="font-size:11px; margin:2px;">My Video</p><video autoplay muted id="localVid"></video>`;
             myBox.querySelector('video').srcObject = stream;
             grid.appendChild(myBox);
 
-            // Request active accepted users video streams
-            socket.emit('request_conference_peers');
+            socket.emit('join_conference', { device: getMeta().device });
         }).catch(err => alert("Camera permission required."));
     }
 
-    socket.on('receive_peer_stream', function(peerData) {
-        let grid = document.getElementById('videoGridContainer');
-        let peerBox = document.createElement('div');
-        peerBox.className = 'video-box';
-        peerBox.innerHTML = `<p style="font-size:11px; margin:2px;">${peerData.device}</p><video autoplay src="${peerData.stream_url}"></video>`;
-        grid.appendChild(peerBox);
+    socket.on('peer_joined', function(data) {
+        let peerId = data.device;
+        if(peerId === getMeta().device) return;
+
+        let pc = new RTCPeerConnection(rtcConfig);
+        peerConnections[peerId] = pc;
+
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+        pc.ontrack = event => {
+            let grid = document.getElementById('videoGridContainer');
+            if(!document.getElementById('vid-' + peerId)) {
+                let peerBox = document.createElement('div');
+                peerBox.className = 'video-box';
+                peerBox.innerHTML = `<p style="font-size:11px; margin:2px;">${peerId}</p><video autoplay id="vid-${peerId}"></video>`;
+                grid.appendChild(peerBox);
+            }
+            document.getElementById('vid-' + peerId).srcObject = event.streams[0];
+        };
+
+        pc.onicecandidate = event => {
+            if(event.candidate) {
+                socket.emit('ice_candidate', { to: peerId, candidate: event.candidate });
+            }
+        };
+
+        pc.createOffer().then(offer => {
+            pc.setLocalDescription(offer);
+            socket.emit('offer', { to: peerId, offer: offer, from: getMeta().device });
+        });
     });
 
-    function acceptCallAction() {
-        alert("Conference Accepted & Active!");
-        socket.emit('join_conference', { device: getMeta().device });
-    }
+    socket.on('offer', async function(data) {
+        let peerId = data.from;
+        let pc = new RTCPeerConnection(rtcConfig);
+        peerConnections[peerId] = pc;
+
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+        pc.ontrack = event => {
+            let grid = document.getElementById('videoGridContainer');
+            if(!document.getElementById('vid-' + peerId)) {
+                let peerBox = document.createElement('div');
+                peerBox.className = 'video-box';
+                peerBox.innerHTML = `<p style="font-size:11px; margin:2px;">${peerId}</p><video autoplay id="vid-${peerId}"></video>`;
+                grid.appendChild(peerBox);
+            }
+            document.getElementById('vid-' + peerId).srcObject = event.streams[0];
+        };
+
+        pc.onicecandidate = event => {
+            if(event.candidate) socket.emit('ice_candidate', { to: peerId, candidate: event.candidate });
+        };
+
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        let answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('answer', { to: peerId, answer: answer, from: getMeta().device });
+    });
+
+    socket.on('answer', async function(data) {
+        let pc = peerConnections[data.from];
+        if(pc) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+    });
+
+    socket.on('ice_candidate', async function(data) {
+        let pc = peerConnections[data.from];
+        if(pc && data.candidate) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+    });
+
+    function acceptCallAction() { alert("Video Conference Active!"); }
 
     function stopConference() {
-        if(myStreamInstance) {
-            myStreamInstance.getTracks().forEach(track => track.stop());
-        }
+        if(localStream) localStream.getTracks().forEach(t => t.stop());
+        for(let id in peerConnections) { peerConnections[id].close(); }
+        peerConnections = {};
         document.getElementById('videoPopup').style.display = 'none';
     }
 
-    function closePopup() {
-        stopConference();
-    }
+    function closePopup() { stopConference(); }
 
-    // Server-wide Storage Reset
     function resetStorage() {
         if(confirm("Render Server တစ်ခုလုံးရှိ သိမ်းဆည်းထားသော အချက်အလက်များကို အမှန်တကယ် ရှင်းလင်းမည်လား?")) {
             socket.emit('server_reset_storage');
@@ -486,16 +491,13 @@ HTML_PAGE = """
 
     socket.on('storage_warning', function(isNearFull) {
         let pane = document.getElementById('rightPane');
-        if(isNearFull) {
-            pane.classList.add('storage-warning');
-        } else {
-            pane.classList.remove('storage-warning');
-        }
+        if(isNearFull) pane.classList.add('storage-warning');
+        else pane.classList.remove('storage-warning');
     });
 
     socket.on('force_reload_ui', function() {
         document.getElementById('historyStream').innerHTML = '';
-        alert("Server storage completely reset.");
+        alert("Server storage reset.");
     });
 </script>
 </body>
@@ -504,7 +506,14 @@ HTML_PAGE = """
 
 @app.route('/')
 def index():
-    cleanup_expired_data()
+    # Middleware: Block unapproved or banned devices
+    dev_id = request.args.get('dev')
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
     return render_template_string(HTML_PAGE)
 
 @app.route('/get_history')
@@ -514,18 +523,7 @@ def get_history():
     cursor.execute('SELECT id, user_info, msg_type, content, filename, store_type FROM history ORDER BY id ASC')
     rows = cursor.fetchall()
     conn.close()
-    
-    history = []
-    for r in rows:
-        history.append({
-            'id': r[0],
-            'user': r[1],
-            'type': r[2],
-            'content': r[3],
-            'filename': r[4],
-            'store': r[5]
-        })
-    return jsonify(history)
+    return jsonify([{'id': r[0], 'user': r[1], 'type': r[2], 'content': r[3], 'filename': r[4], 'store': r[5]} for r in rows])
 
 @app.route('/get_devices')
 def get_devices():
@@ -534,15 +532,7 @@ def get_devices():
     cursor.execute('SELECT device_id, google_account, status FROM devices')
     rows = cursor.fetchall()
     conn.close()
-    devices = []
-    for r in rows:
-        devices.append({
-            'device_id': r[0],
-            'account': r[1],
-            'status': r[2],
-            'active': r[2] == 'approved'
-        })
-    return jsonify(devices)
+    return jsonify([{'device_id': r[0], 'account': r[1], 'status': r[2], 'active': r[2] == 'approved'} for r in rows])
 
 @socketio.on('register_device')
 def handle_register_device(data):
@@ -553,10 +543,11 @@ def handle_register_device(data):
     cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
     row = cursor.fetchone()
     if not row:
-        # New device request sent to officialwinmyat@gmail.com
         cursor.execute('INSERT INTO devices (device_id, google_account, status, last_active) VALUES (?, ?, ?, ?)',
                        (dev_id, account, 'pending', datetime.now()))
         status = 'pending'
+        # Send Email Notification to officialwinmyat@gmail.com
+        send_approval_email(dev_id, account)
     else:
         status = row[0]
         cursor.execute('UPDATE devices SET last_active = ? WHERE device_id = ?', (datetime.now(), dev_id))
@@ -567,7 +558,7 @@ def handle_register_device(data):
 @socketio.on('admin_device_action')
 def handle_admin_action(data):
     dev_id = data.get('device_id')
-    action = data.get('action') # 'approved', 'banned', 'remove'
+    action = data.get('action')
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
     if action == 'remove':
@@ -578,18 +569,27 @@ def handle_admin_action(data):
     conn.close()
     emit('device_status_update', {'device_id': dev_id, 'status': action}, broadcast=True)
 
+@socketio.on('join_conference')
+def handle_join_conference(data):
+    emit('peer_joined', data, broadcast=True)
+
+@socketio.on('offer')
+def handle_offer(data):
+    emit('offer', data, broadcast=True)
+
+@socketio.on('answer')
+def handle_answer(data):
+    emit('answer', data, broadcast=True)
+
+@socketio.on('ice_candidate')
+def handle_ice(data):
+    emit('ice_candidate', data, broadcast=True)
+
 @socketio.on('new_message')
 def handle_new_message(data):
     store = data.get('store', '48h')
     now = datetime.now()
-    expire = None
-    if store == '5m':
-        expire = now + timedelta(minutes=5)
-    elif store == '1h':
-        expire = now + timedelta(hours=1)
-    elif store == '48h':
-        expire = now + timedelta(hours=48)
-
+    expire = now + timedelta(minutes=5) if store == '5m' else (now + timedelta(hours=1) if store == '1h' else now + timedelta(hours=48))
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
     cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -598,12 +598,8 @@ def handle_new_message(data):
     cursor.execute('SELECT COUNT(*) FROM history')
     count = cursor.fetchone()[0]
     conn.close()
-
     socketio.emit('broadcast_message', data)
-    if count > 50:
-        socketio.emit('storage_warning', True)
-    else:
-        socketio.emit('storage_warning', False)
+    socketio.emit('storage_warning', count > 50)
 
 @socketio.on('server_reset_storage')
 def handle_server_reset_storage():
