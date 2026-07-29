@@ -378,6 +378,7 @@ def handle_reset():
         except Exception as e:
             print("Reset storage error:", e)
 
+
 HTML_PAGE = """
 <!DOCTYPE html>
 <html>
@@ -405,10 +406,12 @@ HTML_PAGE = """
         }
         .left-pane { width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box; background: var(--panel-bg); border-right: 3px solid var(--accent-color); position: relative; backdrop-filter: blur(12px); }
         .right-pane { width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box; background: var(--stream-bg); position: relative; backdrop-filter: blur(12px); border-left: 3px solid var(--accent-color); }
+
         .card { background: rgba(255,255,255,0.06); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 2px solid var(--accent-color); backdrop-filter: blur(8px); box-shadow: 0 0 12px rgba(236,72,153,0.25); }
         input, textarea, select, button { width: 100%; padding: 10px; margin: 8px 0; border-radius: 5px; border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.9); color: white; box-sizing: border-box; }
         button { background: var(--accent-color); cursor: pointer; font-weight: bold; border: 2px solid #fff; transition: 0.2s; }
         button:hover { opacity: 0.85; transform: scale(1.01); }
+
         #historyStream { flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color); border-radius: 8px; padding: 10px; box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 40px; }
         .history-item { padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.07); border-left: 6px solid var(--accent-color); border-radius: 6px; font-size: 13px; word-break: break-all; position: relative; }
         .msg-actions { margin-top: 8px; display: flex; gap: 6px; }
@@ -419,6 +422,7 @@ HTML_PAGE = """
         .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 6px; padding: 5px; position: relative; }
         .video-label { position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #fff; padding: 2px 6px; font-size: 11px; border-radius: 4px; }
         video { width: 100%; height: 160px; object-fit: cover; border-radius: 4px; background: #000; }
+
         .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
         .badge-active { height: 10px; width: 10px; background-color: #22c55e; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px #22c55e; }
         .badge-inactive { height: 10px; width: 10px; background-color: #64748b; border-radius: 50%; display: inline-block; }
@@ -430,331 +434,403 @@ HTML_PAGE = """
 </head>
 <body>
 
-    <div id="authOverlay">
-        <h2 style="color: #f472b6;">WMA QQ - Chinese & Japanese Anime Hub</h2>
-        <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password ဖြင့် ဝင်ရောက်ပါ (သို့မဟုတ် အကောင့်အသစ်ဖွင့်ပါ)</p>
-        <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 8px; border: 2px solid var(--accent-color); width: 320px;">
-            <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
-            <input type="password" id="loginPassword" placeholder="Password">
-            
-            <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0 10px 0;">
-                <input type="checkbox" id="showPasswordToggle" onclick="togglePasswordVisibility()" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Password ပြရန်
-            </div>
-
-            <button onclick="loginUser()" style="background: var(--accent-color); margin-top: 5px;">Login</button>
-            <button onclick="signupUser()" style="background: #3b82f6; margin-top: 5px;">Sign Up (အကောင့်သစ်ဖွင့်ရန်)</button>
-            <button onclick="forgotPassword()" style="background: #eab308; color: #000; margin-top: 5px; font-size: 12px;">Forgot Password? (စကားဝှက်မေ့နေပါက)</button>
-            <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
+<!-- Login / Sign Up Screen -->
+<div id="authOverlay">
+    <h2 style="color: #f472b6;">WMA QQ - Chinese & Japanese Anime Hub</h2>
+    <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password ဖြင့် ဝင်ရောက်ပါ (သို့မဟုတ် အကောင့်အသစ်ဖွင့်ပါ)</p>
+    <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 8px; border: 2px solid var(--accent-color); width: 320px;">
+        <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
+        <input type="password" id="loginPassword" placeholder="Password">
+        
+        <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0;">
+            <input type="checkbox" id="showPasswordToggle" onclick="togglePasswordVisibility()" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Password ပြရန်
         </div>
-    </div>
-
-    <div id="pendingOverlay">
-        <h2 style="color: #f472b6;">Device Pending Approval / Access Blocked</h2>
-        <p id="pendingMessage" style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့်စက် သို့မဟုတ် အကောင့်ကို Admin မှ အတည်ပြုရန် စောင့်ဆိုင်းနေပါသည် သို့မဟုတ် ပိတ်ပင်ထားပါသည်။</p>
-        <button onclick="checkAuthSession()" style="width: 200px; background: var(--accent-color);">Reload / စစ်ဆေးမည်</button>
-        <button onclick="logoutUserSession()" style="width: 200px; background: #dc2626; margin-top: 10px;">Logout (ထွက်ရန်)</button>
-    </div>
-
-    <div id="appContainer">
-        <div class="left-pane">
-            <button id="resetBtn" onclick="resetStorage()">Reset All Storage</button>
-            <h2>WMA QQ Control Panel</h2>
-            
-            <div class="card">
-                <h3>User & Device Status</h3>
-                <div style="font-size: 13px; margin-bottom: 8px;">Logged in as: <strong id="currentUserEmail" style="color: #f472b6;"></strong></div>
-                <button onclick="logoutUserSession()" style="background: #dc2626; padding: 6px; font-size: 12px;">Logout</button>
-                <div style="margin-top: 10px; max-height: 150px; overflow-y: auto;" id="deviceListContainer"></div>
-            </div>
-
-            <div class="card">
-                <h3>Send Announcement / Message</h3>
-                <input type="text" id="msgUser" placeholder="Your Name / Alias">
-                <select id="msgType">
-                    <option value="text">Text Message</option>
-                    <option value="image">Image URL</option>
-                    <option value="link">Web Link</option>
-                </select>
-                <textarea id="msgContent" placeholder="Enter message content..."></textarea>
-                <input type="text" id="msgFilename" placeholder="Filename (optional)">
-                <label style="font-size: 12px;">Storage Duration:</label>
-                <select id="msgStore">
-                    <option value="48h">48 Hours</option>
-                    <option value="1h">1 Hour</option>
-                    <option value="5m">5 Minutes</option>
-                </select>
-                <button onclick="sendMessage()">Broadcast Message</button>
-            </div>
-
-            <div class="card">
-                <h3>Video Conference / Call</h3>
-                <button onclick="startVideoCall()" style="background: #10b981;">Start Video Meeting</button>
-            </div>
+        
+        <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0 10px 0;">
+            <input type="checkbox" id="rememberMeCheckbox" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Remember Me / Save Password
         </div>
 
-        <div class="right-pane">
-            <h2 style="margin-top: 0; color: #f472b6;">Live Stream & Chat History</h2>
-            <div id="historyStream"></div>
-        </div>
+        <button onclick="loginUser()" style="background: var(--accent-color); margin-top: 5px;">Login</button>
+        <button onclick="signupUser()" style="background: #3b82f6; margin-top: 5px;">Sign Up (အကောင့်သစ်ဖွင့်ရန်)</button>
+        <button onclick="forgotPassword()" style="background: #eab308; color: #000; margin-top: 5px; font-size: 12px;">Forgot Password?</button>
+        <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
     </div>
+</div>
 
+<!-- Pending / Ban Access Block Screen -->
+<div id="pendingOverlay">
+    <h2 id="overlayTitle" style="color: #f472b6;">WMA QQ - Device Verification Required</h2>
+    <p id="overlayDesc" style="max-width: 500px; color: #cbd5e1; margin: 15px 0;">သင့် Device သည် Admin (officialwinmyat@gmail.com) ထံမှ Approve အတည်ပြုချက် ရယူရန် လိုအပ်နေပါသည်။</p>
+    <div style="background: rgba(255,255,255,0.08); padding: 15px; border-radius: 8px; border: 2px solid var(--accent-color); margin-bottom: 15px; width: 320px;">
+        <input type="text" id="overlayDeviceId" readonly style="text-align:center; font-weight:bold;">
+        <div id="overlayStatus" style="font-size: 14px; color: #facc15; font-weight: bold; margin-top: 10px;">Status: Pending Approval ⏳</div>
+    </div>
+    <button onclick="logoutUser()" style="background: #dc2626; width: auto; padding: 8px 15px;">Logout</button>
+</div>
+
+<!-- Main Application Container -->
+<div id="appContainer">
+    <!-- Video Conference Popup -->
     <div id="videoPopup">
-        <h3 style="color: #f472b6; margin: 0;">WMA QQ Live Video Conference</h3>
-        <div class="video-grid" id="videoGrid">
-            <div class="video-box">
+        <h3>WMA QQ - Anime Video Conference</h3>
+        <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: #f472b6;"></div>
+        <div style="font-size: 13px; color: #facc15; margin-bottom: 8px;">Active Participants in Call: <span id="activeCallCount">1</span></div>
+        <div class="video-grid" id="videoGridContainer">
+            <div class="video-box" id="localVideoContainer">
                 <video id="localVideo" autoplay muted playsinline></video>
-                <div class="video-label">You</div>
+                <div class="video-label">Local Stream (You)</div>
             </div>
         </div>
-        <button onclick="closeVideoCall()" style="background: #dc2626; width: 150px; margin-top: 10px;">Leave Call</button>
+        <div class="actions" style="margin-top: 15px; display: flex; justify-content: center; gap: 10px;">
+            <button onclick="stopConference()" style="background: #ca8a04; width: auto; padding: 8px 15px;">Stop Video Conference</button>
+            <button onclick="closePopup()" style="background: #dc2626; width: auto; padding: 8px 15px;">Close</button>
+        </div>
     </div>
 
-    <script>
-        const socket = io();
-        let currentUser = "";
-        let isAdmin = false;
-        let localStream = null;
-        let peers = {};
-        const deviceId = 'dev_' + Math.random().toString(36.25).substr(2, 9);
+    <!-- Left Pane: Controls & Admin Panel -->
+    <div class="left-pane">
+        <h2>WMA QQ Anime Control Panel</h2>
+        <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:#f472b6;"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
+        <div class="card">
+            <h4>Dynamic Chinese & Japanese Anime Themes</h4>
+            <button onclick="autoGenerateAnimeTheme()">Randomize Anime Character Theme</button>
+        </div>
 
-        window.onload = function() {
-            checkAuthSession();
-            loadHistory();
-        };
+        <!-- Admin Control Panel Card -->
+        <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
+            <h4 style="color: #f59e0b;">👑 Admin Control Panel (Official Win Myat)</h4>
+            <p style="font-size: 11px; color: #cbd5e1; margin: 0 0 8px 0;">ဤနေရာမှသာ Device များကို Approve, Ban သို့မဟုတ် Remove လုပ်နိုင်ပါသည်။</p>
+            <div style="font-size: 12px; color: #facc15; margin-bottom: 5px;">Active & Pending Devices List:</div>
+            <div id="activeDeviceList" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
+        </div>
 
-        function togglePasswordVisibility() {
-            const pwdInput = document.getElementById('loginPassword');
-            pwdInput.type = document.getElementById('showPasswordToggle').checked ? 'text' : 'password';
-        }
+        <!-- Other Controls & Features -->
+        <div class="card">
+            <h4>Voice & Messages Hub</h4>
+            <textarea id="msgContent" placeholder="စာသား သို့မဟုတ် မက်ဆေ့ခ်ျ ထည့်ရန်..."></textarea>
+            <select id="storeType">
+                <option value="48h">48 Hours Storage</option>
+                <option value="1h">1 Hour Storage</option>
+                <option value="5m">5 Minutes Storage</option>
+            </select>
+            <button onclick="sendNewMessage()">Broadcast Message</button>
+        </div>
+        <div class="card">
+            <h4>Video Conference & Streaming</h4>
+            <button onclick="startVideoCall()" style="background: #2563eb;">Start Video Conference</button>
+        </div>
+    </div>
 
-        function signupUser() {
-            const email = document.getElementById('loginEmail').value;
-            const password = document.getElementById('loginPassword').value;
-            fetch('/signup', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({email, password})
-            })
-            .then(res => res.json())
-            .then(data => {
-                if(data.success) {
-                    checkAuthSession();
-                } else {
-                    document.getElementById('loginError').innerText = data.error;
+    <!-- Right Pane: Message Stream & History -->
+    <div class="right-pane">
+        <button id="resetBtn" onclick="resetStorageData()">Reset All History</button>
+        <h3>Live Anime Message Stream</h3>
+        <div id="historyStream"></div>
+    </div>
+</div>
+
+<script>
+    const socket = io();
+    let deviceId = localStorage.getItem('wma_device_id');
+    if (!deviceId) {
+        deviceId = 'dev_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        localStorage.setItem('wma_device_id', deviceId);
+    }
+
+    function togglePasswordVisibility() {
+        const pwdInput = document.getElementById('loginPassword');
+        const showToggle = document.getElementById('showPasswordToggle');
+        pwdInput.type = showToggle.checked ? 'text' : 'password';
+    }
+
+    function checkSession() {
+        fetch('/check_session')
+        .then(res => res.json())
+        .then(data => {
+            if (data.logged_in) {
+                document.getElementById('authOverlay').style.display = 'none';
+                document.getElementById('currentLoggedInEmail').innerText = data.email;
+                if (data.is_admin) {
+                    document.getElementById('adminControlCard').style.display = 'block';
+                    document.getElementById('resetBtn').style.display = 'block';
                 }
-            });
-        }
-
-        function loginUser() {
-            const email = document.getElementById('loginEmail').value;
-            const password = document.getElementById('loginPassword').value;
-            fetch('/login', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({email, password})
-            })
-            .then(res => res.json())
-            .then(data => {
-                if(data.success) {
-                    checkAuthSession();
-                } else {
-                    document.getElementById('loginError').innerText = data.error;
-                }
-            });
-        }
-
-        function forgotPassword() {
-            const email = document.getElementById('loginEmail').value;
-            if(!email) {
-                document.getElementById('loginError').innerText = "ကျေးဇူးပြု၍ Email ထည့်ပါ။";
-                return;
-            }
-            fetch('/forgot_password', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({email})
-            })
-            .then(res => res.json())
-            .then(data => {
-                if(data.success) {
-                    alert(data.message);
-                } else {
-                    document.getElementById('loginError').innerText = data.error;
-                }
-            });
-        }
-
-        function logoutUserSession() {
-            fetch('/logout', {method: 'POST'})
-            .then(() => {
-                document.getElementById('appContainer').style.display = 'none';
-                document.getElementById('pendingOverlay').style.display = 'none';
-                document.getElementById('authOverlay').style.display = 'flex';
-            });
-        }
-
-        function checkAuthSession() {
-            fetch('/check_session')
-            .then(res => res.json())
-            .then(data => {
-                if(data.logged_in) {
-                    currentUser = data.email;
-                    isAdmin = data.is_admin;
-                    document.getElementById('currentUserEmail').innerText = currentUser;
-                    document.getElementById('authOverlay').style.display = 'none';
-                    
-                    if(isAdmin) {
-                        document.getElementById('resetBtn').style.display = 'block';
-                    }
-
-                    socket.emit('register_device', {device_id: deviceId, google_account: currentUser});
-                    fetchDevices();
-                    
-                    document.getElementById('appContainer').style.display = 'flex';
-                    document.getElementById('pendingOverlay').style.display = 'none';
+                socket.emit('register_device', { device_id: deviceId, google_account: data.email });
+                loadDevices();
+                loadHistory();
+            } else {
+                // Check Remember Me credentials if available in localStorage
+                const savedEmail = localStorage.getItem('wma_saved_email');
+                const savedPassword = localStorage.getItem('wma_saved_password');
+                const savedDeviceId = localStorage.getItem('wma_saved_device_id');
+                
+                if (savedEmail && savedPassword && savedDeviceId === deviceId) {
+                    // Auto-login using saved credentials
+                    fetch('/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email: savedEmail, password: savedPassword })
+                    })
+                    .then(res => res.json())
+                    .then(loginData => {
+                        if (loginData.success) {
+                            checkSession();
+                        } else {
+                            localStorage.removeItem('wma_saved_email');
+                            localStorage.removeItem('wma_saved_password');
+                            localStorage.removeItem('wma_saved_device_id');
+                            document.getElementById('authOverlay').style.display = 'flex';
+                            document.getElementById('appContainer').style.display = 'none';
+                        }
+                    }).catch(() => {
+                        document.getElementById('authOverlay').style.display = 'flex';
+                        document.getElementById('appContainer').style.display = 'none';
+                    });
                 } else {
                     document.getElementById('authOverlay').style.display = 'flex';
                     document.getElementById('appContainer').style.display = 'none';
                 }
-            });
-        }
+            }
+        });
+    }
 
-        function fetchDevices() {
-            fetch('/get_devices')
-            .then(res => res.json())
-            .then(devices => {
-                const container = document.getElementById('deviceListContainer');
-                container.innerHTML = '<strong>Connected Devices:</strong>';
-                let currentDeviceApproved = true;
-                
-                devices.forEach(d => {
-                    if(d.device_id === deviceId && d.status !== 'approved' && !isAdmin) {
-                        currentDeviceApproved = false;
-                    }
-                    
-                    let div = document.createElement('div');
-                    div.className = 'device-row';
-                    div.innerHTML = `<span><span class="${d.active ? 'badge-active' : 'badge-inactive'}"></span> ${d.account} (${d.status})</span>`;
-                    
-                    if(isAdmin) {
-                        let btnHtml = '';
-                        if(d.status !== 'approved') btnHtml += `<button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 6px; font-size:10px; background:#10b981; width:auto; margin-left:4px;">Approve</button>`;
-                        if(d.status !== 'banned') btnHtml += `<button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 6px; font-size:10px; background:#eab308; color:#000; width:auto; margin-left:4px;">Ban</button>`;
-                        btnHtml += `<button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 6px; font-size:10px; background:#dc2626; width:auto; margin-left:4px;">Remove</button>`;
-                        div.innerHTML += `<div>${btnHtml}</div>`;
-                    }
-                    container.appendChild(div);
-                });
+    function loginUser() {
+        const email = document.getElementById('loginEmail').value.trim();
+        const password = document.getElementById('loginPassword').value;
+        const rememberMe = document.getElementById('rememberMeCheckbox').checked;
 
-                if(!currentDeviceApproved && !isAdmin) {
-                    document.getElementById('appContainer').style.display = 'none';
-                    document.getElementById('pendingOverlay').style.display = 'flex';
+        fetch('/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                if (rememberMe) {
+                    localStorage.setItem('wma_saved_email', email);
+                    localStorage.setItem('wma_saved_password', password);
+                    localStorage.setItem('wma_saved_device_id', deviceId);
+                } else {
+                    localStorage.removeItem('wma_saved_email');
+                    localStorage.removeItem('wma_saved_password');
+                    localStorage.removeItem('wma_saved_device_id');
                 }
+                checkSession();
+            } else {
+                document.getElementById('loginError').innerText = data.error;
+            }
+        });
+    }
+
+    function signupUser() {
+        const email = document.getElementById('loginEmail').value.trim();
+        const password = document.getElementById('loginPassword').value;
+        fetch('/signup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                checkSession();
+            } else {
+                document.getElementById('loginError').innerText = data.error;
+            }
+        });
+    }
+
+    function forgotPassword() {
+        const email = document.getElementById('loginEmail').value.trim();
+        if (!email) {
+            document.getElementById('loginError').innerText = "ကျေးဇူးပြု၍ Email ထည့်ပါ။";
+            return;
+        }
+        fetch('/forgot_password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                document.getElementById('loginError').innerText = "";
+            } else {
+                document.getElementById('loginError').innerText = data.error;
+            }
+        });
+    }
+
+    function logoutUser() {
+        localStorage.removeItem('wma_saved_email');
+        localStorage.removeItem('wma_saved_password');
+        localStorage.removeItem('wma_saved_device_id');
+        fetch('/logout', { method: 'POST' })
+        .then(() => {
+            location.reload();
+        });
+    }
+
+    function loadDevices() {
+        fetch('/get_devices')
+        .then(res => res.json())
+        .then(devices => {
+            let currentDevice = devices.find(d => d.device_id === deviceId);
+            if (currentDevice && currentDevice.account !== 'officialwinmyat@gmail.com') {
+                if (currentDevice.status === 'pending') {
+                    document.getElementById('pendingOverlay').style.display = 'flex';
+                    document.getElementById('overlayDeviceId').value = deviceId;
+                    document.getElementById('overlayStatus').innerText = "Status: Pending Approval ⏳";
+                    document.getElementById('appContainer').style.display = 'none';
+                    return;
+                } else if (currentDevice.status === 'banned') {
+                    document.getElementById('pendingOverlay').style.display = 'flex';
+                    document.getElementById('overlayTitle').innerText = "Access Banned";
+                    document.getElementById('overlayDesc').innerText = "သင့် Device ဝင်ရောက်မှုကို Admin မှ ပိတ်ပင်ထားပါသည်။";
+                    document.getElementById('overlayDeviceId').value = deviceId;
+                    document.getElementById('overlayStatus').innerText = "Status: Banned ❌";
+                    document.getElementById('overlayStatus').style.color = "#f87171";
+                    document.getElementById('appContainer').style.display = 'none';
+                    return;
+                }
+            }
+
+            document.getElementById('pendingOverlay').style.display = 'none';
+            document.getElementById('appContainer').style.display = 'flex';
+
+            let listHtml = '';
+            devices.forEach(d => {
+                let badge = d.active ? '<span class="badge-active"></span>' : '<span class="badge-inactive"></span>';
+                listHtml += `<div class="device-row">
+                    <div>${badge} <b>${d.account || 'Unknown'}</b><br><small style="color:#94a3b8">${d.device_id}</small></div>
+                    <div>`;
+                if (d.is_current_user_admin) {
+                    if (d.status === 'pending') {
+                        listHtml += `<button onclick="adminAction('${d.device_id}', 'approved')" style="background:#22c55e; padding:2px 6px; font-size:10px; width:auto;">Approve</button> `;
+                    } else if (d.status === 'approved') {
+                        listHtml += `<button onclick="adminAction('${d.device_id}', 'banned')" style="background:#eab308; padding:2px 6px; font-size:10px; width:auto;">Ban</button> `;
+                    } else {
+                        listHtml += `<button onclick="adminAction('${d.device_id}', 'approved')" style="background:#22c55e; padding:2px 6px; font-size:10px; width:auto;">Unban</button> `;
+                    }
+                    listHtml += `<button onclick="adminAction('${d.device_id}', 'remove')" style="background:#dc2626; padding:2px 6px; font-size:10px; width:auto;">Remove</button>`;
+                } else {
+                    listHtml += `<span>${d.status}</span>`;
+                }
+                listHtml += `</div></div>`;
             });
-        }
-
-        function adminAction(devId, action) {
-            socket.emit('admin_device_action', {device_id: devId, action: action});
-            setTimeout(fetchDevices, 500);
-        }
-
-        function loadHistory() {
-            fetch('/get_history')
-            .then(res => res.json())
-            .then(history => {
-                const stream = document.getElementById('historyStream');
-                stream.innerHTML = '';
-                history.forEach(item => appendMessageToStream(item));
-            });
-        }
-
-        function sendMessage() {
-            const user = document.getElementById('msgUser').value || currentUser;
-            const type = document.getElementById('msgType').value;
-            const content = document.getElementById('msgContent').value;
-            const filename = document.getElementById('msgFilename').value;
-            const store = document.getElementById('msgStore').value;
-
-            if(!content) return;
-
-            socket.emit('new_message', {user, type, content, filename, store});
-            document.getElementById('msgContent').value = '';
-        }
-
-        function deleteMessage(id) {
-            socket.emit('delete_message_item', {id: id});
-        }
-
-        socket.on('broadcast_message', function(data) {
-            appendMessageToStream(data);
+            const devListEl = document.getElementById('activeDeviceList');
+            if (devListEl) devListEl.innerHTML = listHtml;
         });
+    }
 
-        socket.on('message_deleted', function(data) {
-            const el = document.getElementById('msg_item_' + data.id);
-            if(el) el.remove();
-        });
+    function adminAction(devId, action) {
+        socket.emit('admin_device_action', { device_id: devId, action: action });
+    }
 
-        socket.on('device_status_update', function(data) {
-            fetchDevices();
-        });
-
-        function appendMessageToStream(item) {
+    function loadHistory() {
+        fetch('/get_history')
+        .then(res => res.json())
+        .then(history => {
             const stream = document.getElementById('historyStream');
-            const div = document.createElement('div');
-            div.className = 'history-item';
-            div.id = 'msg_item_' + item.id;
-            
-            let contentHtml = item.content;
-            if(item.type === 'image') {
-                contentHtml = `<img src="${item.content}" class="chat-image-preview">`;
-            } else if(item.type === 'link') {
-                contentHtml = `<a href="${item.content}" target="_blank" style="color: #f472b6;">${item.content}</a>`;
-            }
-
-            div.innerHTML = `
-                <strong>${item.user}</strong> <span style="font-size:10px; color:#94a3b8;">(${item.timestamp})</span><br>
-                <div style="margin-top:4px;">${contentHtml}</div>
-                ${item.filename ? `<div style="font-size:11px; color:#cbd5e1; margin-top:2px;">File: ${item.filename}</div>` : ''}
-                <div class="msg-actions">
-                    ${isAdmin ? `<button onclick="deleteMessage(${item.id})" style="background:#dc2626;">Delete</button>` : ''}
-                </div>
-            `;
-            stream.prepend(div);
-        }
-
-        function resetStorage() {
-            if(confirm("Are you sure you want to clear all history storage?")) {
-                socket.emit('reset_storage');
-            }
-        }
-
-        socket.on('storage_reset', function() {
-            document.getElementById('historyStream').innerHTML = '';
-        });
-
-        function startVideoCall() {
-            document.getElementById('videoPopup').style.display = 'block';
-            navigator.mediaDevices.getUserMedia({video: true, audio: true})
-            .then(stream => {
-                localStream = stream;
-                document.getElementById('localVideo').srcObject = stream;
-                socket.emit('join_conference', {room: 'wma_qq_room'});
-            }).catch(err => {
-                alert("Camera/Mic access denied or error: " + err);
+            stream.innerHTML = '';
+            history.forEach(item => {
+                appendMessageItem(item);
             });
-        }
+        });
+    }
 
-        function closeVideoCall() {
-            if(localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-            }
-            document.getElementById('videoPopup').style.display = 'none';
-            socket.emit('leave_conference', {});
+    function sendNewMessage() {
+        const content = document.getElementById('msgContent').value.trim();
+        const store = document.getElementById('storeType').value;
+        if (!content) return;
+
+        socket.emit('new_message', {
+            user: document.getElementById('currentLoggedInEmail').innerText,
+            type: 'text',
+            content: content,
+            store: store
+        });
+        document.getElementById('msgContent').value = '';
+    }
+
+    function appendMessageItem(item) {
+        const stream = document.getElementById('historyStream');
+        const div = document.createElement('div');
+        div.className = 'history-item';
+        div.id = 'msg_' + item.id;
+        div.innerHTML = `<b>${item.user}</b> <small style="color:#94a3b8; float:right;">${item.timestamp}</small><br>
+            <div>${item.content}</div>
+            <div class="msg-actions">
+                <button onclick="deleteMessage(${item.id})" style="background:#dc2626;">Delete</button>
+            </div>`;
+        stream.prepend(div);
+    }
+
+    function deleteMessage(id) {
+        socket.emit('delete_message_item', { id: id });
+    }
+
+    function resetStorageData() {
+        if (confirm("မှတ်တမ်းအားလုံးကို ရှင်းလင်းရန် သေချာပါသလား?")) {
+            socket.emit('reset_storage');
         }
-    </script>
+    }
+
+    // Socket Event Listeners
+    socket.on('device_status_update', () => {
+        checkSession();
+    });
+
+    socket.on('broadcast_message', (item) => {
+        appendMessageItem(item);
+    });
+
+    socket.on('message_deleted', (data) => {
+        const el = document.getElementById('msg_' + data.id);
+        if (el) el.remove();
+    });
+
+    socket.on('storage_reset', () => {
+        loadHistory();
+    });
+
+    // Anime Themes background rotator
+    const animeImages = [
+        'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80',
+        'https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80',
+        'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80'
+    ];
+    function autoGenerateAnimeTheme() {
+        const randomImg = animeImages[Math.floor(Math.random() * animeImages.length)];
+        document.body.style.backgroundImage = `url('${randomImg}')`;
+    }
+
+    // Video Call Stubs
+    function startVideoCall() {
+        document.getElementById('videoPopup').style.display = 'block';
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        .then(stream => {
+            const localVideo = document.getElementById('localVideo');
+            localVideo.srcObject = stream;
+        }).catch(err => console.log("Media error:", err));
+    }
+
+    function stopConference() {
+        const localVideo = document.getElementById('localVideo');
+        if (localVideo.srcObject) {
+            localVideo.srcObject.getTracks().forEach(track => track.stop());
+        }
+        document.getElementById('videoPopup').style.display = 'none';
+    }
+
+    function closePopup() {
+        document.getElementById('videoPopup').style.display = 'none';
+    }
+
+    window.onload = function() {
+        checkSession();
+    };
+</script>
 </body>
 </html>
-"""
-
-if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
