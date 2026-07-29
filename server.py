@@ -446,59 +446,52 @@ HTML_PAGE = """
         <!-- Left Pane: Controls & Admin Panel -->
         <div class="left-pane">
             <h2>WMA QQ Anime Control Panel</h2>
-            <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:#f472b6;"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
+            <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:#f472b6;"></b> <button onclick="logoutUser()" style="background:#dc2626; padding:4px 10px; width:auto; font-size:11px; margin-left:10px;">Logout</button></div>
             
             <div class="card">
-                <h4>Dynamic Chinese & Japanese Anime Themes</h4>
-                <button onclick="autoGenerateAnimeTheme()">Randomize Anime Character Theme</button>
+                <h3>Device Status & Control</h3>
+                <div style="font-size: 12px; margin-bottom: 8px; color: #cbd5e1;">Device ID: <span id="myDeviceIdDisplay" style="font-weight:bold; color:#f472b6;"></span></div>
+                <div id="deviceListContainer">Loading devices...</div>
             </div>
 
-            <!-- Admin Control Panel Card -->
-            <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
-                <h4 style="color: #f59e0b;">👑 Admin Control Panel (Official Win Myat)</h4>
-                <p style="font-size: 11px; color: #cbd5e1; margin: 0 0 8px 0;">ဤနေရာမှသာ Device များကို Approve, Ban သို့မဟုတ် Remove လုပ်နိုင်ပါသည်။</p>
-                <div style="font-size: 12px; color: #facc15; margin-bottom: 5px;">Active & Pending Devices List:</div>
-                <div id="activeDeviceList" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
-            </div>
-
-            <!-- Other Controls & Features -->
             <div class="card">
-                <h4>Voice & Messages Hub</h4>
-                <textarea id="msgContent" placeholder="စာသား သို့မဟုတ် မက်ဆေ့ခ်ျ ထည့်ရန်..."></textarea>
-                <select id="storeType">
-                    <option value="48h">48 Hours Storage</option>
-                    <option value="1h">1 Hour Storage</option>
-                    <option value="5m">5 Minutes Storage</option>
-                </select>
-                <button onclick="sendNewMessage()">Broadcast Message</button>
-            </div>
-            
-            <div class="card">
-                <h4>Video Conference & Streaming</h4>
-                <button onclick="startVideoCall()" style="background: #2563eb;">Start Video Conference</button>
+                <h3>Start Video Conference</h3>
+                <button onclick="startConference()" style="background: #10b981;">Start Group Video Call</button>
             </div>
         </div>
 
-        <!-- Right Pane: Message Stream & History -->
+        <!-- Right Pane: Stream & History -->
         <div class="right-pane">
-            <button id="resetBtn" onclick="resetStorageData()">Reset All History</button>
-            <h3>Live Anime Message Stream</h3>
+            <button id="resetBtn" onclick="resetStorage()">Reset All History</button>
+            <h2>WMA QQ Live History Stream</h2>
             <div id="historyStream"></div>
         </div>
     </div>
 
     <script>
         const socket = io();
-        let deviceId = localStorage.getItem('wma_device_id');
-        if (!deviceId) {
-            deviceId = 'dev_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-            localStorage.setItem('wma_device_id', deviceId);
+        let currentUserEmail = '';
+        let isAdmin = false;
+        let localStream = null;
+        let peerConnections = {};
+        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+        function getOrCreateDeviceId() {
+            let devId = localStorage.getItem('wma_qq_device_id');
+            if (!devId) {
+                devId = 'dev_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+                localStorage.setItem('wma_qq_device_id', devId);
+            }
+            return devId;
         }
+
+        const deviceId = getOrCreateDeviceId();
+        document.getElementById('myDeviceIdDisplay').innerText = deviceId;
+        document.getElementById('overlayDeviceId').value = deviceId;
 
         function togglePasswordVisibility() {
             const pwdInput = document.getElementById('loginPassword');
-            const showToggle = document.getElementById('showPasswordToggle');
-            pwdInput.type = showToggle.checked ? 'text' : 'password';
+            pwdInput.type = document.getElementById('showPasswordToggle').checked ? 'text' : 'password';
         }
 
         function checkSession() {
@@ -506,17 +499,18 @@ HTML_PAGE = """
             .then(res => res.json())
             .then(data => {
                 if (data.logged_in) {
+                    currentUserEmail = data.email;
+                    isAdmin = data.is_admin;
+                    document.getElementById('currentLoggedInEmail').innerText = currentUserEmail;
                     document.getElementById('authOverlay').style.display = 'none';
-                    document.getElementById('currentLoggedInEmail').innerText = data.email;
                     
-                    if (data.is_admin) {
-                        document.getElementById('adminControlCard').style.display = 'block';
+                    if (isAdmin) {
                         document.getElementById('resetBtn').style.display = 'block';
                     }
                     
-                    socket.emit('register_device', { device_id: deviceId, google_account: data.email });
-                    loadDevices();
-                    loadHistory();
+                    socket.emit('register_device', { device_id: deviceId, google_account: currentUserEmail });
+                    fetchDevices();
+                    fetchHistory();
                 } else {
                     document.getElementById('authOverlay').style.display = 'flex';
                     document.getElementById('appContainer').style.display = 'none';
@@ -525,7 +519,7 @@ HTML_PAGE = """
         }
 
         function loginUser() {
-            const email = document.getElementById('loginEmail').value.trim();
+            const email = document.getElementById('loginEmail').value;
             const password = document.getElementById('loginPassword').value;
             
             fetch('/login', {
@@ -544,7 +538,7 @@ HTML_PAGE = """
         }
 
         function signupUser() {
-            const email = document.getElementById('loginEmail').value.trim();
+            const email = document.getElementById('loginEmail').value;
             const password = document.getElementById('loginPassword').value;
             
             fetch('/signup', {
@@ -563,171 +557,112 @@ HTML_PAGE = """
         }
 
         function logoutUser() {
-            fetch('/logout', { method: 'POST' })
-            .then(() => {
+            fetch('/logout', { method: 'POST' }).then(() => {
                 location.reload();
             });
         }
 
-        function loadDevices() {
+        function fetchDevices() {
             fetch('/get_devices')
             .then(res => res.json())
             .then(devices => {
-                let currentDevice = devices.find(d => d.device_id === deviceId);
-                if (currentDevice && currentDevice.account !== 'officialwinmyat@gmail.com') {
-                    if (currentDevice.status === 'pending') {
-                        document.getElementById('pendingOverlay').style.display = 'flex';
-                        document.getElementById('overlayDeviceId').value = deviceId;
-                        document.getElementById('overlayStatus').innerText = "Status: Pending Approval ⏳";
-                        document.getElementById('appContainer').style.display = 'none';
-                        return;
-                    } else if (currentDevice.status === 'banned') {
-                        document.getElementById('pendingOverlay').style.display = 'flex';
-                        document.getElementById('overlayTitle').innerText = "Access Banned";
-                        document.getElementById('overlayDesc').innerText = "သင့် Device ဝင်ရောက်မှုကို Admin မှ ပိတ်ပင်ထားပါသည်။";
-                        document.getElementById('overlayDeviceId').value = deviceId;
-                        document.getElementById('overlayStatus').innerText = "Status: Banned ❌";
-                        document.getElementById('overlayStatus').style.color = "#f87171";
-                        document.getElementById('appContainer').style.display = 'none';
-                        return;
-                    }
-                }
-
-                document.getElementById('pendingOverlay').style.display = 'none';
-                document.getElementById('appContainer').style.display = 'flex';
-
-                let listHtml = '';
+                let html = '';
+                let myStatus = 'pending';
+                
                 devices.forEach(d => {
-                    let badge = d.active ? '<span class="badge-active"></span>' : '<span class="badge-inactive"></span>';
-                    listHtml += `<div class="device-row">
-                        <div>${badge} <b>${d.account || 'Unknown'}</b><br><small style="color:#94a3b8">${d.device_id}</small></div>
-                        <div>`;
-                    if (d.is_current_user_admin) {
-                        if (d.status === 'pending') {
-                            listHtml += `<button onclick="adminAction('${d.device_id}', 'approved')" style="background:#22c55e; padding:2px 6px; font-size:10px; width:auto;">Approve</button> `;
-                        } else if (d.status === 'approved') {
-                            listHtml += `<button onclick="adminAction('${d.device_id}', 'banned')" style="background:#eab308; padding:2px 6px; font-size:10px; width:auto;">Ban</button> `;
-                        } else {
-                            listHtml += `<button onclick="adminAction('${d.device_id}', 'approved')" style="background:#22c55e; padding:2px 6px; font-size:10px; width:auto;">Unban</button> `;
-                        }
-                        listHtml += `<button onclick="adminAction('${d.device_id}', 'remove')" style="background:#dc2626; padding:2px 6px; font-size:10px; width:auto;">Remove</button>`;
-                    } else {
-                        listHtml += `<span>${d.status}</span>`;
+                    if (d.device_id === deviceId) {
+                        myStatus = d.status;
                     }
-                    listHtml += `</div></div>`;
+                    const activeBadge = d.active ? '<span class="badge-active"></span>' : '<span class="badge-inactive"></span>';
+                    html += `<div class="device-row">
+                        <div>${activeBadge} <b>${d.account}</b><br><small style="color:#aaa;">${d.device_id}</small></div>
+                        <div>
+                            <span style="color: ${d.status=='approved'?'#22c55e':(d.status=='banned'?'#ef4444':'#facc15')}">${d.status}</span>`;
+                    
+                    if (isAdmin && d.device_id !== deviceId) {
+                        if (d.status !== 'approved') html += ` <button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 6px; font-size:10px; background:#22c55e; width:auto;">Approve</button>`;
+                        if (d.status !== 'banned') html += ` <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 6px; font-size:10px; background:#ef4444; width:auto;">Ban</button>`;
+                        html += ` <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 6px; font-size:10px; background:#64748b; width:auto;">Remove</button>`;
+                    }
+                    html += `</div></div>`;
                 });
-                const devListEl = document.getElementById('activeDeviceList');
-                if (devListEl) devListEl.innerHTML = listHtml;
+                
+                document.getElementById('deviceListContainer').innerHTML = html;
+                
+                if (myStatus === 'approved' || currentUserEmail === 'officialwinmyat@gmail.com') {
+                    document.getElementById('pendingOverlay').style.display = 'none';
+                    document.getElementById('appContainer').style.display = 'flex';
+                } else {
+                    document.getElementById('pendingOverlay').style.display = 'flex';
+                    document.getElementById('appContainer').style.display = 'none';
+                    document.getElementById('overlayStatus').innerText = `Status: ${myStatus.toUpperCase()} ⏳`;
+                }
             });
         }
 
-        function adminAction(devId, action) {
-            socket.emit('admin_device_action', { device_id: devId, action: action });
+        function adminAction(targetDevId, action) {
+            socket.emit('admin_device_action', { device_id: targetDevId, action: action });
         }
 
-        function loadHistory() {
+        function fetchHistory() {
             fetch('/get_history')
             .then(res => res.json())
             .then(history => {
-                const stream = document.getElementById('historyStream');
-                stream.innerHTML = '';
+                let html = '';
                 history.forEach(item => {
-                    appendMessageItem(item);
+                    html += `<div class="history-item">
+                        <b>${item.user}</b> (${item.timestamp})<br>
+                        <div>${item.content}</div>`;
+                    if (isAdmin) {
+                        html += `<div class="msg-actions"><button onclick="deleteMessage(${item.id})" style="background:#ef4444;">Delete</button></div>`;
+                    }
+                    html += `</div>`;
                 });
+                document.getElementById('historyStream').innerHTML = html;
             });
-        }
-
-        function sendNewMessage() {
-            const content = document.getElementById('msgContent').value.trim();
-            const store = document.getElementById('storeType').value;
-            if (!content) return;
-
-            socket.emit('new_message', {
-                user: document.getElementById('currentLoggedInEmail').innerText,
-                type: 'text',
-                content: content,
-                store: store
-            });
-            document.getElementById('msgContent').value = '';
-        }
-
-        function appendMessageItem(item) {
-            const stream = document.getElementById('historyStream');
-            const div = document.createElement('div');
-            div.className = 'history-item';
-            div.id = 'msg_' + item.id;
-            div.innerHTML = `<b>${item.user}</b> <small style="color:#94a3b8; float:right;">${item.timestamp}</small><br>
-                             <div>${item.content}</div>
-                             <div class="msg-actions">
-                                 <button onclick="deleteMessage(${item.id})" style="background:#dc2626;">Delete</button>
-                             </div>`;
-            stream.prepend(div);
         }
 
         function deleteMessage(id) {
             socket.emit('delete_message_item', { id: id });
         }
 
-        function resetStorageData() {
-            if (confirm("မှတ်တမ်းအားလုံးကို ရှင်းလင်းရန် သေချာပါသလား?")) {
+        function resetStorage() {
+            if (confirm('Are you sure you want to reset all history?')) {
                 socket.emit('reset_storage');
             }
         }
 
-        // Socket Event Listeners
-        socket.on('device_status_update', () => {
-            checkSession();
-        });
-
-        socket.on('broadcast_message', (item) => {
-            appendMessageItem(item);
-        });
-
-        socket.on('message_deleted', (data) => {
-            const el = document.getElementById('msg_' + data.id);
-            if (el) el.remove();
-        });
-
-        socket.on('storage_reset', () => {
-            loadHistory();
-        });
-
-        // Anime Themes background rotator
-        const animeImages = [
-            'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80',
-            'https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80',
-            'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80'
-        ];
-        function autoGenerateAnimeTheme() {
-            const randomImg = animeImages[Math.floor(Math.random() * animeImages.length)];
-            document.body.style.backgroundImage = `url('${randomImg}')`;
-        }
-
-        // Video Call Dummy Stubs
-        function startVideoCall() {
+        // Video Call Functions
+        async function startConference() {
             document.getElementById('videoPopup').style.display = 'block';
-            navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-            .then(stream => {
-                const localVideo = document.getElementById('localVideo');
-                localVideo.srcObject = stream;
-            }).catch(err => console.log("Media error:", err));
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                document.getElementById('localVideo').srcObject = localStream;
+                socket.emit('join_conference', { device_id: deviceId });
+            } catch (err) {
+                alert('Could not access camera/microphone.');
+            }
         }
 
         function stopConference() {
-            const localVideo = document.getElementById('localVideo');
-            if (localVideo.srcObject) {
-                localVideo.srcObject.getTracks().forEach(track => track.stop());
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
             }
-            document.getElementById('videoPopup').style.display = 'none';
+            socket.emit('leave_conference', { device_id: deviceId });
+            closePopup();
         }
 
         function closePopup() {
             document.getElementById('videoPopup').style.display = 'none';
         }
 
-        window.onload = function() {
-            checkSession();
-        };
+        socket.on('device_status_update', () => { fetchDevices(); });
+        socket.on('broadcast_message', () => { fetchHistory(); });
+        socket.on('message_deleted', () => { fetchHistory(); });
+        socket.on('storage_reset', () => { fetchHistory(); });
+
+        window.onload = checkSession;
     </script>
 </body>
 </html>
+"""
