@@ -168,19 +168,20 @@ def get_devices():
 def get_history():
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT user_info, msg_type, content, filename, store_type, timestamp FROM history ORDER BY id DESC')
+    cursor.execute('SELECT id, user_info, msg_type, content, filename, store_type, timestamp FROM history ORDER BY id DESC')
     rows = cursor.fetchall()
     conn.close()
     
     history = []
     for r in rows:
         history.append({
-            "user": r[0],
-            "type": r[1],
-            "content": r[2],
-            "filename": r[3],
-            "store": r[4],
-            "timestamp": r[5]
+            "id": r[0],
+            "user": r[1],
+            "type": r[2],
+            "content": r[3],
+            "filename": r[4],
+            "store": r[5],
+            "timestamp": r[6]
         })
     return jsonify(history)
 
@@ -250,10 +251,12 @@ def handle_new_message(data):
     cursor = conn.cursor()
     cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)',
                    (user, msg_type, content, filename, store, expire_at, now.strftime('%Y-%m-%d %H:%M:%S')))
+    msg_id = cursor.lastrowid
     conn.commit()
     conn.close()
     
     socketio.emit('broadcast_message', {
+        "id": msg_id,
         "user": user,
         "type": msg_type,
         "content": content,
@@ -262,9 +265,24 @@ def handle_new_message(data):
         "timestamp": now.strftime('%Y-%m-%d %H:%M:%S')
     })
 
+@socketio.on('delete_message_item')
+def handle_delete_message(data):
+    msg_id = data.get('id')
+    if msg_id:
+        conn = sqlite3.connect('wma_qq.db')
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM history WHERE id = ?', (msg_id,))
+        conn.commit()
+        conn.close()
+        socketio.emit('message_deleted', {"id": msg_id})
+
 @socketio.on('trigger_video_call')
 def handle_video_call(data):
     socketio.emit('incoming_video_call', data)
+
+@socketio.on('video_signal')
+def handle_video_signal(data):
+    socketio.emit('video_signal_relay', data)
 
 @socketio.on('reset_storage')
 def handle_reset():
@@ -281,18 +299,18 @@ HTML_PAGE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WMA QQ - Advanced Special Web App</title>
+    <title>WMA QQ - Chinese & Japanese Anime Spacial Web App</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <style>
         :root {
             --bg-color: #0f172a;
-            --panel-bg: rgba(30, 41, 59, 0.75);
+            --panel-bg: rgba(20, 24, 33, 0.85);
             --text-color: #f8fafc;
             --accent-color: #ec4899;
-            --chat-bg: rgba(9, 13, 22, 0.7);
-            --stream-bg: rgba(30, 41, 59, 0.7);
-            --bg-image: url('https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80');
+            --chat-bg: rgba(10, 14, 23, 0.8);
+            --stream-bg: rgba(20, 24, 33, 0.8);
+            --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80'); /* Chinese/Japanese anime immersive vibe */
         }
         body { 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
@@ -303,39 +321,44 @@ HTML_PAGE = """
             color: var(--text-color); display: flex; height: 100vh; overflow: hidden; 
         }
         
-        .left-pane { width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box; background: var(--panel-bg); border-right: 3px solid var(--accent-color); position: relative; backdrop-filter: blur(10px); }
-        .right-pane { width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box; background: var(--stream-bg); position: relative; backdrop-filter: blur(10px); border-left: 3px solid var(--accent-color); }
+        .left-pane { width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box; background: var(--panel-bg); border-right: 3px solid var(--accent-color); position: relative; backdrop-filter: blur(12px); }
+        .right-pane { width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box; background: var(--stream-bg); position: relative; backdrop-filter: blur(12px); border-left: 3px solid var(--accent-color); }
 
-        .card { background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 2px solid var(--accent-color); backdrop-filter: blur(5px); box-shadow: 0 0 10px rgba(236,72,153,0.3); }
-        input, textarea, select, button { width: 100%; padding: 10px; margin: 8px 0; border-radius: 5px; border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.85); color: white; box-sizing: border-box; }
-        button { background: var(--accent-color); cursor: pointer; font-weight: bold; border: 2px solid #fff; }
-        button:hover { opacity: 0.9; }
+        .card { background: rgba(255,255,255,0.06); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 2px solid var(--accent-color); backdrop-filter: blur(8px); box-shadow: 0 0 12px rgba(236,72,153,0.25); }
+        input, textarea, select, button { width: 100%; padding: 10px; margin: 8px 0; border-radius: 5px; border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.9); color: white; box-sizing: border-box; }
+        button { background: var(--accent-color); cursor: pointer; font-weight: bold; border: 2px solid #fff; transition: 0.2s; }
+        button:hover { opacity: 0.85; transform: scale(1.01); }
 
-        #historyStream { flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color); border-radius: 8px; padding: 10px; box-sizing: border-box; backdrop-filter: blur(5px); margin-top: 40px; }
-        .history-item { padding: 10px; margin-bottom: 8px; background: rgba(255,255,255,0.08); border-left: 6px solid var(--accent-color); border-right: 2px solid var(--accent-color); border-radius: 4px; font-size: 13px; word-break: break-all; }
+        #historyStream { flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color); border-radius: 8px; padding: 10px; box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 40px; }
+        .history-item { padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.07); border-left: 6px solid var(--accent-color); border-radius: 6px; font-size: 13px; word-break: break-all; position: relative; }
+        .msg-actions { margin-top: 8px; display: flex; gap: 6px; }
+        .msg-actions button { padding: 4px 10px; font-size: 11px; width: auto; margin: 0; border-radius: 4px; }
         
         #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none; }
         
-        #videoPopup { display: none; position: fixed; top: 10%; left: 15%; width: 70%; background: rgba(30, 41, 59, 0.95); border: 3px solid var(--accent-color); border-radius: 10px; padding: 20px; z-index: 1000; box-shadow: 0 0 30px rgba(0,0,0,0.9); text-align: center; backdrop-filter: blur(15px); }
-        .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; max-height: 350px; overflow-y: auto; margin: 15px 0; }
-        video { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; background: #000; }
+        #videoPopup { display: none; position: fixed; top: 10%; left: 15%; width: 70%; background: rgba(20, 24, 33, 0.98); border: 3px solid var(--accent-color); border-radius: 10px; padding: 20px; z-index: 1000; box-shadow: 0 0 35px rgba(236,72,153,0.5); text-align: center; backdrop-filter: blur(18px); }
+        .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; max-height: 380px; overflow-y: auto; margin: 15px 0; }
+        .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 6px; padding: 5px; }
+        video { width: 100%; height: 160px; object-fit: cover; border-radius: 4px; background: #000; }
 
         .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
         .badge-active { height: 10px; width: 10px; background-color: #22c55e; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px #22c55e; }
         .badge-inactive { height: 10px; width: 10px; background-color: #64748b; border-radius: 50%; display: inline-block; }
         
         #appContainer { display: none; width: 100%; height: 100vh; }
-        #authOverlay, #pendingOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; background: rgba(15, 23, 42, 0.95); z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 20px; }
+        #authOverlay, #pendingOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; background: rgba(10, 14, 23, 0.96); z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 20px; }
         #pendingOverlay { display: none; }
+        
+        .chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 1px solid var(--accent-color); display: block; }
     </style>
 </head>
 <body>
 
     <!-- Login / Sign Up Screen -->
     <div id="authOverlay">
-        <h2 style="color: #f472b6;">WMA QQ - Account Login & Sign Up</h2>
+        <h2 style="color: #f472b6;">WMA QQ - Chinese & Japanese Anime Hub</h2>
         <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password ဖြင့် ဝင်ရောက်ပါ (သို့မဟုတ် အကောင့်အသစ်ဖွင့်ပါ)</p>
-        <div style="background: rgba(255,255,255,0.1); padding: 20px; border-radius: 8px; border: 2px solid var(--accent-color); width: 320px;">
+        <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 8px; border: 2px solid var(--accent-color); width: 320px;">
             <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
             <input type="password" id="loginPassword" placeholder="Password">
             
@@ -353,7 +376,7 @@ HTML_PAGE = """
     <div id="pendingOverlay">
         <h2 id="overlayTitle" style="color: #f472b6;">WMA QQ - Device Verification Required</h2>
         <p id="overlayDesc" style="max-width: 500px; color: #cbd5e1; margin: 15px 0;">သင့် Device သည် Admin (officialwinmyat@gmail.com) ထံမှ Approve အတည်ပြုချက် ရယူရန် လိုအပ်နေပါသည်။</p>
-        <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px; border: 2px solid var(--accent-color); margin-bottom: 15px; width: 320px;">
+        <div style="background: rgba(255,255,255,0.08); padding: 15px; border-radius: 8px; border: 2px solid var(--accent-color); margin-bottom: 15px; width: 320px;">
             <input type="text" id="overlayDeviceId" readonly style="text-align:center; font-weight:bold;">
             <div id="overlayStatus" style="font-size: 14px; color: #facc15; font-weight: bold; margin-top: 10px;">Status: Pending Approval ⏳</div>
         </div>
@@ -362,25 +385,27 @@ HTML_PAGE = """
 
     <!-- Main Application Container -->
     <div id="appContainer">
+        <!-- Video Conference Popup -->
         <div id="videoPopup">
-            <h3>WMA QQ - Video Conference (10s)</h3>
+            <h3>WMA QQ - Anime Video Conference</h3>
             <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: #f472b6;"></div>
             <div class="video-grid" id="videoGridContainer">
-                <div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream</div></div>
+                <div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>
             </div>
-            <div class="actions" style="margin-top: 15px;">
+            <div class="actions" style="margin-top: 15px; display: flex; justify-content: center; gap: 10px;">
                 <button onclick="stopConference()" style="background: #ca8a04; width: auto; padding: 8px 15px;">Stop Video Conference</button>
                 <button onclick="closePopup()" style="background: #dc2626; width: auto; padding: 8px 15px;">Close</button>
             </div>
         </div>
 
+        <!-- Incoming Call Alert in Live Chat -->
         <div class="left-pane">
-            <h2>WMA QQ Control Panel</h2>
+            <h2>WMA QQ Anime Control Panel</h2>
             <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:#f472b6;"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
             
             <div class="card">
-                <h4>Dynamic Spacial Themes (Spider-Man, Anime, etc.)</h4>
-                <button onclick="autoGenerateSpacialTheme()">Auto Generate Spacial Theme</button>
+                <h4>Dynamic Chinese & Japanese Anime Themes</h4>
+                <button onclick="autoGenerateAnimeTheme()">Randomize Anime Character Theme</button>
             </div>
 
             <!-- Admin Control Panel Card -->
@@ -419,8 +444,8 @@ HTML_PAGE = """
             <!-- Function 4: File or Image -->
             <div class="card">
                 <h4>Function 4: Original File or Image (48h)</h4>
-                <input type="file" id="fileInput">
-                <button onclick="sendFile()">Send File / Image</button>
+                <input type="file" id="fileInput" onchange="handleFileSelected(this)">
+                <button id="sendFileBtn" onclick="sendFile()" disabled style="opacity: 0.5;">Send File / Image</button>
             </div>
         </div>
 
@@ -436,41 +461,60 @@ HTML_PAGE = """
     let mediaRecorder;
     let audioChunks = [];
     let localStream = null;
-    let videoCallTimeout = null;
+    let peerConnections = {};
+    let selectedFileBase64 = null;
+    let selectedFileName = '';
+    let selectedFileType = '';
 
-    window.onload = function() {
-        checkSession();
-        loadHistory();
-        loadDevices();
-    };
+    const animeThemes = [
+        { name: "Naruto Uzumaki", bg: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#f97316" },
+        { name: "Gojo Satoru", bg: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", accent: "#3b82f6" },
+        { name: "Wei Wuxian (MDZS)", bg: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", accent: "#a855f7" },
+        { name: "Nezuko Kamado", bg: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" }
+    ];
+
+    function autoGenerateAnimeTheme() {
+        const theme = animeThemes[Math.floor(Math.random() * animeThemes.length)];
+        document.documentElement.style.setProperty('--accent-color', theme.accent);
+        document.documentElement.style.setProperty('--bg-image', `url('${theme.bg}')`);
+        alert("Theme switched to anime style: " + theme.name);
+    }
 
     function togglePasswordVisibility() {
-        let pwdInput = document.getElementById('loginPassword');
-        pwdInput.type = document.getElementById('showPasswordToggle').checked ? 'text' : 'password';
+        const pwd = document.getElementById('loginPassword');
+        pwd.type = document.getElementById('showPasswordToggle').checked ? 'text' : 'password';
     }
 
-    function checkSession() {
-        fetch('/check_session')
-        .then(res => res.json())
-        .then(data => {
-            if (data.logged_in) {
-                document.getElementById('authOverlay').style.display = 'none';
-                document.getElementById('currentLoggedInEmail').innerText = data.email;
-                if(data.is_admin) {
-                    document.getElementById('adminControlCard').style.display = 'block';
-                    document.getElementById('resetBtn').style.display = 'block';
-                }
-                verifyDevice(data.email);
-            } else {
-                document.getElementById('authOverlay').style.display = 'flex';
-                document.getElementById('appContainer').style.display = 'none';
-            }
-        });
+    function getDeviceId() {
+        let devId = localStorage.getItem('wma_device_id');
+        if (!devId) {
+            devId = 'device_' + Math.random().toString(36).substring(2, 15);
+            localStorage.setItem('wma_device_id', devId);
+        }
+        return devId;
     }
+
+    // Check Session on Load
+    fetch('/check_session')
+    .then(res => res.json())
+    .then(data => {
+        if (data.logged_in) {
+            document.getElementById('authOverlay').style.display = 'none';
+            document.getElementById('appContainer').style.display = 'flex';
+            document.getElementById('currentLoggedInEmail').innerText = data.email;
+            if (data.is_admin) {
+                document.getElementById('adminControlCard').style.display = 'block';
+                document.getElementById('resetBtn').style.display = 'block';
+            }
+            registerDeviceWithServer(data.email);
+        } else {
+            document.getElementById('authOverlay').style.display = 'flex';
+        }
+    });
 
     function loginUser() {
-        let email = document.getElementById('loginEmail').value;
-        let password = document.getElementById('loginPassword').value;
+        const email = document.getElementById('loginEmail').value;
+        const password = document.getElementById('loginPassword').value;
         fetch('/login', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -487,8 +531,8 @@ HTML_PAGE = """
     }
 
     function signupUser() {
-        let email = document.getElementById('loginEmail').value;
-        let password = document.getElementById('loginPassword').value;
+        const email = document.getElementById('loginEmail').value;
+        const password = document.getElementById('loginPassword').value;
         fetch('/signup', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -508,127 +552,158 @@ HTML_PAGE = """
         fetch('/logout', {method: 'POST'}).then(() => location.reload());
     }
 
-    function getDeviceId() {
-        let devId = localStorage.getItem('wma_device_id');
-        if (!devId) {
-            devId = 'DEV-' + Math.random().toString(36).substr(2, 9).toUpperCase();
-            localStorage.setItem('wma_device_id', devId);
-        }
-        return devId;
-    }
-
-    function verifyDevice(email) {
-        let devId = getDeviceId();
+    function registerDeviceWithServer(email) {
+        const devId = getDeviceId();
         socket.emit('register_device', {device_id: devId, google_account: email});
+        fetchDevices();
     }
 
-    socket.on('device_status_update', function(data) {
-        loadDevices();
-        fetch('/get_devices')
-        .then(res => res.json())
-        .then(devices => {
-            let currentDevId = getDeviceId();
-            let currentDev = devices.find(d => d.device_id === currentDevId);
-            if (currentDev) {
-                if (currentDev.status === 'approved') {
-                    document.getElementById('pendingOverlay').style.display = 'none';
-                    document.getElementById('appContainer').style.display = 'flex';
-                } else if (currentDev.status === 'banned') {
-                    document.getElementById('overlayTitle').innerText = "Access Banned ❌";
-                    document.getElementById('overlayStatus').innerText = "Status: Banned by Admin";
-                    document.getElementById('overlayStatus').style.color = "#ef4444";
-                    document.getElementById('overlayDeviceId').value = currentDevId;
-                    document.getElementById('pendingOverlay').style.display = 'flex';
-                    document.getElementById('appContainer').style.display = 'none';
-                } else {
-                    document.getElementById('overlayDeviceId').value = currentDevId;
-                    document.getElementById('pendingOverlay').style.display = 'flex';
-                    document.getElementById('appContainer').style.display = 'none';
-                }
-            }
-        });
+    socket.on('device_status_update', () => {
+        fetchDevices();
     });
 
-    function loadDevices() {
+    function fetchDevices() {
         fetch('/get_devices')
         .then(res => res.json())
         .then(devices => {
-            let listDiv = document.getElementById('activeDeviceList');
-            if(!listDiv) return;
-            listDiv.innerHTML = '';
-            devices.forEach(d => {
-                let row = document.createElement('div');
-                row.className = 'device-row';
-                let actionBtns = '';
-                if (d.is_current_user_admin) {
-                    actionBtns = `<button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 5px; font-size:10px; width:auto; background:#16a34a;">Approve</button>
-                                  <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 5px; font-size:10px; width:auto; background:#ca8a04;">Ban</button>
-                                  <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 5px; font-size:10px; width:auto; background:#dc2626;">Remove</button>`;
+            const devId = getDeviceId();
+            let currentDev = devices.find(d => d.device_id === devId);
+            
+            if (currentDev) {
+                if (currentDev.status === 'pending' && currentDev.account !== 'officialwinmyat@gmail.com') {
+                    document.getElementById('pendingOverlay').style.display = 'flex';
+                    document.getElementById('overlayDeviceId').value = devId;
+                    document.getElementById('overlayStatus').innerText = "Status: Pending Approval ⏳";
+                } else if (currentDev.status === 'banned') {
+                    document.getElementById('pendingOverlay').style.display = 'flex';
+                    document.getElementById('overlayDeviceId').value = devId;
+                    document.getElementById('overlayStatus').innerText = "Status: Banned ❌";
+                } else {
+                    document.getElementById('pendingOverlay').style.display = 'none';
                 }
-                row.innerHTML = `<div><span class="${d.active ? 'badge-active' : 'badge-inactive'}"></span> <b>${d.device_id}</b> (${d.account}) [<b>${d.status}</b>]</div><div>${actionBtns}</div>`;
-                listDiv.appendChild(row);
-            });
+            }
+
+            const listContainer = document.getElementById('activeDeviceList');
+            if (listContainer) {
+                listContainer.innerHTML = '';
+                devices.forEach(d => {
+                    let row = document.createElement('div');
+                    row.className = 'device-row';
+                    row.innerHTML = `<span><b>${d.device_id}</b> (${d.account}) [${d.status}]</span>
+                                   <div>
+                                      <button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 6px; font-size:10px; background:#16a34a; width:auto;">Approve</button>
+                                      <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 6px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
+                                      <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 6px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
+                                   </div>`;
+                    listContainer.appendChild(row);
+                });
+            }
         });
     }
 
-    function adminAction(deviceId, action) {
-        socket.emit('admin_device_action', {device_id: deviceId, action: action});
+    function adminAction(devId, action) {
+        socket.emit('admin_device_action', {device_id: devId, action: action});
     }
 
-    function loadHistory() {
-        fetch('/get_history')
-        .then(res => res.json())
-        .then(history => {
-            let stream = document.getElementById('historyStream');
-            stream.innerHTML = '';
-            history.reverse().forEach(h => appendHistoryItem(h));
-        });
-    }
+    // Load History on Start
+    fetch('/get_history')
+    .then(res => res.json())
+    .then(data => {
+        const stream = document.getElementById('historyStream');
+        stream.innerHTML = '';
+        data.reverse().forEach(item => appendMessageToStream(item));
+    });
 
-    function appendHistoryItem(h) {
-        let stream = document.getElementById('historyStream');
-        let div = document.createElement('div');
+    socket.on('broadcast_message', data => {
+        appendMessageToStream(data);
+    });
+
+    socket.on('message_deleted', data => {
+        const el = document.getElementById('msg-box-' + data.id);
+        if (el) el.remove();
+    });
+
+    function appendMessageToStream(item) {
+        const stream = document.getElementById('historyStream');
+        const div = document.createElement('div');
         div.className = 'history-item';
-        let contentDisplay = h.content;
-        if(h.type === 'voice') {
-            contentDisplay = `<audio controls src="${h.content}"></audio>`;
-        } else if(h.type === 'file') {
-            contentDisplay = `<a href="${h.content}" target="_blank" style="color:#f472b6; font-weight:bold;">📎 Download ${h.filename}</a>`;
+        div.id = 'msg-box-' + item.id;
+        
+        let contentHtml = '';
+        if (item.type === 'text') {
+            contentHtml = `<div><b>${item.user}:</b> ${item.content}</div>`;
+        } else if (item.type === 'voice') {
+            contentHtml = `<div><b>${item.user} [Voice - ${item.store}]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
+        } else if (item.type === 'file') {
+            if (item.filename && (item.filename.endsWith('.jpg') || item.filename.endsWith('.png') || item.filename.endsWith('.jpeg'))) {
+                contentHtml = `<div><b>${item.user} [Image]:</b><br><img src="${item.content}" class="chat-image-preview"></div>`;
+            } else {
+                contentHtml = `<div><b>${item.user} [File]:</b> <a href="${item.content}" download="${item.filename}" style="color:#f472b6;">${item.filename}</a></div>`;
+            }
+        } else if (item.type === 'videocall_alert') {
+            contentHtml = `<div><b>🚨 Anime Video Call Alert:</b> ${item.user} has triggered a video conference!</div>`;
         }
-        div.innerHTML = `<b>${h.user}</b> <span style="font-size:10px; color:#94a3b8;">(${h.timestamp}) [Store: ${h.store}]</span><br>${contentDisplay}`;
+
+        let actionButtons = '';
+        if (item.type === 'text') {
+            actionButtons = `<div class="msg-actions">
+                <button onclick="copyTextContent('${encodeURIComponent(item.content)}')">Copy</button>
+                <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button>
+            </div>`;
+        } else if (item.type === 'voice' || item.type === 'file') {
+            actionButtons = `<div class="msg-actions">
+                <button onclick="saveToDevice('${item.content}', '${item.filename || 'media_file'}')">Save to Device</button>
+                <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button>
+            </div>`;
+        }
+
+        div.innerHTML = contentHtml + actionButtons + `<div style="font-size:10px; color:#94a3b8; margin-top:4px;">${item.timestamp}</div>`;
         stream.appendChild(div);
         stream.scrollTop = stream.scrollHeight;
     }
 
-    socket.on('broadcast_message', function(data) {
-        appendHistoryItem(data);
-    });
+    function copyTextContent(encodedText) {
+        const text = decodeURIComponent(encodedText);
+        navigator.clipboard.writeText(text).then(() => alert("Copied to clipboard!"));
+    }
 
-    let recordingTimer = null;
+    function saveToDevice(dataUrl, filename) {
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }
+
+    function deleteMessageItem(id) {
+        socket.emit('delete_message_item', {id: id});
+    }
+
+    // Voice Recording
     function toggleRecordVoice() {
-        let btn = document.getElementById('recBtn');
-        if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+        const btn = document.getElementById('recBtn');
+        const options = document.getElementById('voiceOptions');
+        if (btn.innerText.includes("Record")) {
             audioChunks = [];
             navigator.mediaDevices.getUserMedia({audio: true}).then(stream => {
                 mediaRecorder = new MediaRecorder(stream);
                 mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
                 mediaRecorder.onstop = () => {
-                    let blob = new Blob(audioChunks, {type: 'audio/webm'});
-                    let reader = new FileReader();
-                    reader.readAsDataURL(blob);
+                    const audioBlob = new Blob(audioChunks, {type: 'audio/mp3'});
+                    const reader = new FileReader();
                     reader.onloadend = () => {
-                        window.lastRecordedAudio = reader.result;
-                        document.getElementById('voiceOptions').style.display = 'block';
+                        window.tempVoiceData = reader.result;
+                        options.style.display = 'block';
                     };
+                    reader.readAsDataURL(audioBlob);
                 };
                 mediaRecorder.start();
-                btn.innerText = "Recording... (Speaking max 3s)";
-                btn.style.background = "#dc2626";
-                recordingTimer = setTimeout(() => {
-                    if(mediaRecorder && mediaRecorder.state === 'recording') {
+                btn.innerText = "Stop Recording (Saving...)";
+                setTimeout(() => {
+                    if (mediaRecorder && mediaRecorder.state === 'recording') {
                         mediaRecorder.stop();
                         btn.innerText = "Record Voice (3s)";
-                        btn.style.background = "var(--accent-color)";
                     }
                 }, 3000);
             });
@@ -636,115 +711,123 @@ HTML_PAGE = """
     }
 
     function sendVoice(storeType) {
-        if(window.lastRecordedAudio) {
-            let userEmail = document.getElementById('currentLoggedInEmail').innerText;
+        if (window.tempVoiceData) {
             socket.emit('new_message', {
-                user: userEmail,
+                user: document.getElementById('currentLoggedInEmail').innerText,
                 type: 'voice',
-                content: window.lastRecordedAudio,
+                content: window.tempVoiceData,
                 store: storeType
             });
             document.getElementById('voiceOptions').style.display = 'none';
-            window.lastRecordedAudio = null;
+            window.tempVoiceData = null;
         }
     }
 
-    function solveEquation(el) {
-        let val = el.value.trim();
+    // Text & Equation
+    function solveEquation(textarea) {
+        let val = textarea.value.trim();
         if (val.endsWith('=')) {
             try {
-                let expr = val.slice(0, -1).trim();
-                let ans = Function('"use strict";return (' + expr + ')')();
-                el.value = val + ' ' + ans;
+                let expr = val.slice(0, -1);
+                let result = eval(expr);
+                textarea.value = val + ' ' + result;
             } catch(e) {}
         }
     }
 
     function sendText() {
-        let text = document.getElementById('textContent').value.trim();
-        if(!text) return;
-        let userEmail = document.getElementById('currentLoggedInEmail').innerText;
+        const content = document.getElementById('textContent').value;
+        if (!content) return;
         socket.emit('new_message', {
-            user: userEmail,
+            user: document.getElementById('currentLoggedInEmail').innerText,
             type: 'text',
-            content: text,
+            content: content,
             store: '48h'
         });
         document.getElementById('textContent').value = '';
     }
 
+    // File Handling with immediate validation fix
+    function handleFileSelected(input) {
+        if (input.files && input.files[0]) {
+            const file = input.files[0];
+            selectedFileName = file.name;
+            selectedFileType = file.type;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                selectedFileBase64 = e.target.result;
+                document.getElementById('sendFileBtn').disabled = false;
+                document.getElementById('sendFileBtn').style.opacity = '1';
+            };
+            reader.readAsDataURL(file);
+        }
+    }
+
     function sendFile() {
-        let fileInput = document.getElementById('fileInput');
-        if(fileInput.files.length === 0) return;
-        let file = fileInput.files[0];
-        let reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onloadend = () => {
-            let userEmail = document.getElementById('currentLoggedInEmail').innerText;
-            socket.emit('new_message', {
-                user: userEmail,
-                type: 'file',
-                content: reader.result,
-                filename: file.name,
-                store: '48h'
-            });
-            fileInput.value = '';
-        };
-    }
-
-    function triggerVideoCall() {
-        let userEmail = document.getElementById('currentLoggedInEmail').innerText;
-        socket.emit('trigger_video_call', {caller: userEmail});
-    }
-
-    socket.on('incoming_video_call', function(data) {
-        document.getElementById('callerInfo').innerText = "Caller: " + data.caller;
-        document.getElementById('videoPopup').style.display = 'block';
-        navigator.mediaDevices.getUserMedia({video: true, audio: true}).then(stream => {
-            localStream = stream;
-            document.getElementById('localVideo').srcObject = stream;
+        if (!selectedFileBase64) return;
+        socket.emit('new_message', {
+            user: document.getElementById('currentLoggedInEmail').innerText,
+            type: 'file',
+            content: selectedFileBase64,
+            filename: selectedFileName,
+            store: '48h'
         });
-        videoCallTimeout = setTimeout(() => {
-            stopConference();
-        }, 10000);
+        document.getElementById('fileInput').value = '';
+        selectedFileBase64 = null;
+        document.getElementById('sendFileBtn').disabled = true;
+        document.getElementById('sendFileBtn').style.opacity = '0.5';
+    }
+
+    // Video Call & Conference handling
+    function triggerVideoCall() {
+        socket.emit('trigger_video_call', {user: document.getElementById('currentLoggedInEmail').innerText});
+        socket.emit('new_message', {
+            user: document.getElementById('currentLoggedInEmail').innerText,
+            type: 'videocall_alert',
+            content: 'Triggered conference',
+            store: '5m'
+        });
+        startConferenceUI(true);
+    }
+
+    socket.on('incoming_video_call', data => {
+        // Show popup with Accept/Decline options in chat or prompt
+        if (confirm(`Incoming Anime Video Call from ${data.user}. Accept?`)) {
+            startConferenceUI(false);
+        }
     });
 
+    function startConferenceUI(isInitiator) {
+        document.getElementById('videoPopup').style.display = 'block';
+        navigator.mediaDevices.getUserMedia({video: true, audio: true})
+        .then(stream => {
+            localStream = stream;
+            document.getElementById('localVideo').srcObject = stream;
+        }).catch(err => alert("Camera permission error: " + err));
+    }
+
     function stopConference() {
-        if(localStream) {
+        if (localStream) {
             localStream.getTracks().forEach(track => track.stop());
         }
-        if(videoCallTimeout) clearTimeout(videoCallTimeout);
-        document.getElementById('videoPopup').style.display = 'none';
+        closePopup();
     }
 
     function closePopup() {
-        stopConference();
+        document.getElementById('videoPopup').style.display = 'none';
     }
 
     function resetStorage() {
-        if(confirm('Are you sure you want to reset all history storage?')) {
+        if (confirm("Are you sure you want to reset all storage?")) {
             socket.emit('reset_storage');
         }
     }
 
-    socket.on('storage_reset', function() {
+    socket.on('storage_reset', () => {
         document.getElementById('historyStream').innerHTML = '';
+        alert("Storage has been reset.");
     });
-
-    let themes = [
-        "url('https://images.unsplash.com/photo-1635863138275-d9b33299780b?auto=format&fit=crop&w=1920&q=80')",
-        "url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80')"
-    ];
-
-    function autoGenerateSpacialTheme() {
-        let randomTheme = themes[Math.floor(Math.random() * themes.length)];
-        document.documentElement.style.setProperty('--bg-image', randomTheme);
-    }
 </script>
 </body>
 </html>
 """
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    socketio.run(app, host='0.0.0.0', port=port)
