@@ -475,9 +475,11 @@ HTML_PAGE = """
             <div class="video-grid" id="videoGridContainer">
                 <div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>
             </div>
-            <div class="actions" style="margin-top: 15px; display: flex; justify-content: center; gap: 10px;">
-                <button onclick="stopConference()" style="background: #ca8a04; width: auto; padding: 8px 15px;">Stop Video Conference</button>
-                <button onclick="closePopup()" style="background: #dc2626; width: auto; padding: 8px 15px;">Close</button>
+            <div class="actions" style="margin-top: 15px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;">
+                <button onclick="stopConference()" style="background: #dc2626; width: auto; padding: 8px 15px;">End Conference</button>
+                <button onclick="toggleMuteSpeaker()" id="muteSpeakerBtn" style="background: #ca8a04; width: auto; padding: 8px 15px;">Mute Speaker</button>
+                <button onclick="toggleMuteCamera()" id="muteCameraBtn" style="background: #2563eb; width: auto; padding: 8px 15px;">Mute Camera</button>
+                <button onclick="closePopup()" style="background: #475569; width: auto; padding: 8px 15px;">Close</button>
             </div>
         </div>
 
@@ -511,8 +513,8 @@ HTML_PAGE = """
 
             <!-- Function 2: Video Call -->
             <div class="card">
-                <h4>Function 2: Video Call (10s)</h4>
-                <button onclick="triggerVideoCall()" style="background: #16a34a;">Call All Active Users (10s)</button>
+                <h4>Function 2: Video Call</h4>
+                <button onclick="triggerVideoCall()" style="background: #16a34a;">Call All Active Users</button>
             </div>
 
             <!-- Function 3: Text & Universal Equation -->
@@ -542,8 +544,18 @@ HTML_PAGE = """
         let mediaRecorder;
         let audioChunks = [];
         let localStream = null;
+        let peerConnections = {}; // socketId -> RTCPeerConnection
         let selectedFileBase64 = null;
         let selectedFileName = '';
+        let isSpeakerMuted = false;
+        let isCameraMuted = false;
+
+        const servers = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        };
 
         const animeThemes = [
             { name: "Naruto Uzumaki", bg: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#f97316" },
@@ -574,7 +586,6 @@ HTML_PAGE = """
             return devId;
         }
 
-        // Check Session & Remember Me on Load
         window.addEventListener('DOMContentLoaded', () => {
             const savedEmail = localStorage.getItem('wma_remember_email');
             const savedToken = localStorage.getItem('wma_remember_token');
@@ -748,7 +759,6 @@ HTML_PAGE = """
             socket.emit('admin_device_action', {device_id: devId, action: action});
         }
 
-        // Load History on Start
         fetch('/get_history')
         .then(res => res.json())
         .then(data => {
@@ -783,7 +793,12 @@ HTML_PAGE = """
                     contentHtml = `<div><b>${item.user} [File]:</b> <a href="${item.content}" download="${item.filename}" style="color:#f472b6;">${item.filename}</a></div>`;
                 }
             } else if (item.type === 'videocall_alert') {
-                contentHtml = `<div><b>🚨 Anime Video Call Alert:</b> ${item.user} has triggered a video conference!</div>`;
+                contentHtml = `<div><b>🚨 Anime Video Call Alert:</b> ${item.user} has started a video call!
+                    <div style="margin-top: 8px; display: flex; gap: 8px;">
+                        <button onclick="acceptVideoCall('${item.user}')" style="background:#16a34a; padding:4px 12px; font-size:12px; width:auto; border-radius:4px;">Accept</button>
+                        <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626; padding:4px 12px; font-size:12px; width:auto; border-radius:4px;">Delete</button>
+                    </div>
+                </div>`;
             }
             
             let actionButtons = '';
@@ -791,8 +806,10 @@ HTML_PAGE = """
                 actionButtons = `<div class="msg-actions"> <button onclick="copyTextContent('${encodeURIComponent(item.content)}')">Copy</button> <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button> </div>`;
             } else if (item.type === 'voice' || item.type === 'file') {
                 actionButtons = `<div class="msg-actions"> <button onclick="saveToDevice('${item.content}', '${item.filename || 'media_file'}')">Save to Device</button> <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button> </div>`;
+            } else if (item.type === 'videocall_alert') {
+                actionButtons = `<div class="msg-actions"><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete Notification</button></div>`;
             }
-            div.innerHTML = contentHtml + actionButtons + `<div style="font-size:10px; color:#94a3b8; margin-top:4px;">${item.timestamp}</div>`;
+            div.innerHTML = contentHtml + (item.type !== 'videocall_alert' ? actionButtons : '') + `<div style="font-size:10px; color:#94a3b8; margin-top:4px;">${item.timestamp}</div>`;
             stream.appendChild(div);
             stream.scrollTop = stream.scrollHeight;
         }
@@ -815,7 +832,6 @@ HTML_PAGE = """
             socket.emit('delete_message_item', {id: id});
         }
 
-        // Voice Recording
         function toggleRecordVoice() {
             const btn = document.getElementById('recBtn');
             const options = document.getElementById('voiceOptions');
@@ -858,7 +874,6 @@ HTML_PAGE = """
             }
         }
 
-        // Text & Equation
         function solveEquation(textarea) {
             let val = textarea.value.trim();
             if (val.endsWith('=')) {
@@ -882,7 +897,6 @@ HTML_PAGE = """
             document.getElementById('textContent').value = '';
         }
 
-        // File Handling
         function handleFileSelected(input) {
             if (input.files && input.files[0]) {
                 const file = input.files[0];
@@ -912,37 +926,147 @@ HTML_PAGE = """
             document.getElementById('sendFileBtn').style.opacity = '0.5';
         }
 
-        // Video Call & Conference handling
+        // WebRTC & Video Conference Logic
         function triggerVideoCall() {
-            socket.emit('trigger_video_call', {user: document.getElementById('currentLoggedInEmail').innerText});
+            const currentUser = document.getElementById('currentLoggedInEmail').innerText;
+            socket.emit('trigger_video_call', {user: currentUser});
             socket.emit('new_message', {
-                user: document.getElementById('currentLoggedInEmail').innerText,
+                user: currentUser,
                 type: 'videocall_alert',
                 content: 'Triggered conference',
                 store: '5m'
             });
-            startConferenceUI();
+            startConferenceUI(currentUser);
         }
 
         socket.on('incoming_video_call', data => {
-            if (confirm(`Incoming Anime Video Call from ${data.user}. Accept?`)) {
-                startConferenceUI();
-            }
+            // Notification handled directly in LiveChat stream items with Accept/Delete buttons.
         });
 
-        function startConferenceUI() {
+        function acceptVideoCall(callerUser) {
+            startConferenceUI(callerUser);
+            // Broadcast join signal to establish peer connections with existing participants
+            socket.emit('video_signal', {type: 'join_call', user: document.getElementById('currentLoggedInEmail').innerText});
+        }
+
+        function startConferenceUI(callerName) {
             document.getElementById('videoPopup').style.display = 'block';
+            document.getElementById('callerInfo').innerText = `Conference Initiated by: ${callerName}`;
+            
             navigator.mediaDevices.getUserMedia({video: true, audio: true})
             .then(stream => {
                 localStream = stream;
                 document.getElementById('localVideo').srcObject = stream;
+
+                // Notify others in room/socket server to connect
+                socket.emit('video_signal', {type: 'ready_peer', sender: socket.id});
             }).catch(err => alert("Camera permission error: " + err));
+        }
+
+        socket.on('video_signal_relay', async data => {
+            const senderId = data.sender;
+            if (senderId === socket.id) return;
+
+            if (data.type === 'ready_peer' || data.type === 'join_call') {
+                if (!localStream) return;
+                let pc = createPeerConnection(senderId);
+                let offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                socket.emit('video_signal', {type: 'offer', offer: offer, sender: socket.id, target: senderId});
+            } else if (data.type === 'offer' && data.target === socket.id) {
+                let pc = createPeerConnection(senderId);
+                await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+                let answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                socket.emit('video_signal', {type: 'answer', answer: answer, sender: socket.id, target: senderId});
+            } else if (data.type === 'answer' && data.target === socket.id) {
+                let pc = peerConnections[senderId];
+                if (pc) {
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+                }
+            } else if (data.type === 'candidate' && data.target === socket.id) {
+                let pc = peerConnections[senderId];
+                if (pc && data.candidate) {
+                    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                }
+            }
+        });
+
+        function createPeerConnection(remoteSocketId) {
+            if (peerConnections[remoteSocketId]) {
+                return peerConnections[remoteSocketId];
+            }
+
+            let pc = new RTCPeerConnection(servers);
+            peerConnections[remoteSocketId] = pc;
+
+            if (localStream) {
+                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            }
+
+            pc.onicecandidate = event => {
+                if (event.candidate) {
+                    socket.emit('video_signal', {type: 'candidate', candidate: event.candidate, sender: socket.id, target: remoteSocketId});
+                }
+            };
+
+            pc.ontrack = event => {
+                let gridContainer = document.getElementById('videoGridContainer');
+                let remoteVideoId = 'remoteVideo_' + remoteSocketId;
+                let existingBox = document.getElementById(remoteVideoId);
+                if (!existingBox) {
+                    let remoteBox = document.createElement('div');
+                    remoteBox.className = 'video-box';
+                    remoteBox.id = remoteVideoId;
+                    remoteBox.innerHTML = `<video autoplay playsinline></video><div>Participant Stream</div>`;
+                    gridContainer.appendChild(remoteBox);
+                    existingBox = remoteBox;
+                }
+                let videoElement = existingBox.querySelector('video');
+                if (videoElement && event.streams[0]) {
+                    videoElement.srcObject = event.streams[0];
+                }
+            };
+
+            return pc;
+        }
+
+        function toggleMuteSpeaker() {
+            if (!localStream) return;
+            isSpeakerMuted = !isSpeakerMuted;
+            localStream.getAudioTracks().forEach(track => {
+                track.enabled = !isSpeakerMuted;
+            });
+            const btn = document.getElementById('muteSpeakerBtn');
+            btn.innerText = isSpeakerMuted ? "Unmute Speaker" : "Mute Speaker";
+            btn.style.background = isSpeakerMuted ? "#dc2626" : "#ca8a04";
+        }
+
+        function toggleMuteCamera() {
+            if (!localStream) return;
+            isCameraMuted = !isCameraMuted;
+            localStream.getVideoTracks().forEach(track => {
+                track.enabled = !isCameraMuted;
+            });
+            const btn = document.getElementById('muteCameraBtn');
+            btn.innerText = isCameraMuted ? "Unmute Camera" : "Mute Camera";
+            btn.style.background = isCameraMuted ? "#dc2626" : "#2563eb";
         }
 
         function stopConference() {
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
             }
+            for (let id in peerConnections) {
+                peerConnections[id].close();
+            }
+            peerConnections = {};
+            
+            // Remove all remote video boxes
+            let gridContainer = document.getElementById('videoGridContainer');
+            gridContainer.innerHTML = '<div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>';
+            
             closePopup();
         }
 
@@ -964,3 +1088,4 @@ HTML_PAGE = """
 </body>
 </html>
 """
+```[cite: 1]
