@@ -357,7 +357,7 @@ HTML_PAGE = """
 <head>
     <title>WMA QQ - Chinese & Japanese Anime Spacial Web App</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script src="[https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js](https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js)"></script>
     <style>
         :root {
             --bg-color: #0f172a;
@@ -366,7 +366,7 @@ HTML_PAGE = """
             --accent-color: #ec4899;
             --chat-bg: rgba(10, 14, 23, 0.8);
             --stream-bg: rgba(20, 24, 33, 0.8);
-            --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80');
+            --bg-image: url('[https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80](https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80)');
         }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -558,10 +558,10 @@ HTML_PAGE = """
         };
 
         const animeThemes = [
-            { name: "Naruto Uzumaki", bg: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#f97316" },
-            { name: "Gojo Satoru", bg: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", accent: "#3b82f6" },
-            { name: "Wei Wuxian (MDZS)", bg: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", accent: "#a855f7" },
-            { name: "Nezuko Kamado", bg: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" }
+            { name: "Naruto Uzumaki", bg: "[https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80](https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80)", accent: "#f97316" },
+            { name: "Gojo Satoru", bg: "[https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80](https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80)", accent: "#3b82f6" },
+            { name: "Wei Wuxian (MDZS)", bg: "[https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80](https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80)", accent: "#a855f7" },
+            { name: "Nezuko Kamado", bg: "[https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80](https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80)", accent: "#ec4899" }
         ];
 
         function autoGenerateAnimeTheme() {
@@ -1063,7 +1063,7 @@ HTML_PAGE = """
             }
             peerConnections = {};
             
-            // Remove all remote video boxes
+            # Remove all remote video boxes
             let gridContainer = document.getElementById('videoGridContainer');
             gridContainer.innerHTML = '<div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>';
             
@@ -1087,5 +1087,3 @@ HTML_PAGE = """
    </script>
 </body>
 </html>
-"""
-```[cite: 1]
