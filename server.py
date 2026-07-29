@@ -20,16 +20,9 @@ from flask_socketio import SocketIO, emit
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
-DB_PATH = 'wma_qq.db'
-
-def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    return conn
-
 # Database Initialization
 def init_db():
-    conn = get_db()
+    conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS history (
@@ -98,7 +91,7 @@ def signup():
         return jsonify({"success": False, "error": "Email နှင့် Password ထည့်ရန် လိုအပ်ပါသည်။"})
     
     try:
-        conn = get_db()
+        conn = sqlite3.connect('wma_qq.db')
         cursor = conn.cursor()
         cursor.execute('INSERT INTO users (email, password) VALUES (?, ?)', (email, password))
         conn.commit()
@@ -118,21 +111,18 @@ def login():
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
     
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('SELECT password FROM users WHERE email = ?', (email,))
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row and row['password'] == password:
-            session['user_email'] = email
-            session['is_admin'] = (email == 'officialwinmyat@gmail.com')
-            return jsonify({"success": True, "is_admin": session['is_admin']})
-        else:
-            return jsonify({"success": False, "error": "Email သို့မဟုတ် Password မှားယွင်းနေပါသည်။"})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT password FROM users WHERE email = ?', (email,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row and row[0] == password:
+        session['user_email'] = email
+        session['is_admin'] = (email == 'officialwinmyat@gmail.com')
+        return jsonify({"success": True, "is_admin": session['is_admin']})
+    else:
+        return jsonify({"success": False, "error": "Email သို့မဟုတ် Password မှားယွင်းနေပါသည်။"})
 
 @app.route('/logout', methods=['POST'])
 def logout():
@@ -157,49 +147,43 @@ def get_devices():
     if 'user_email' not in session:
         return jsonify([])
     
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('SELECT device_id, google_account, status, last_active FROM devices')
-        rows = cursor.fetchall()
-        conn.close()
-        
-        devices = []
-        for r in rows:
-            devices.append({
-                "device_id": r['device_id'],
-                "account": r['google_account'],
-                "status": 'approved' if r['google_account'] == 'officialwinmyat@gmail.com' else r['status'],
-                "active": True if r['last_active'] else False,
-                "is_current_user_admin": session.get('user_email') == 'officialwinmyat@gmail.com'
-            })
-        return jsonify(devices)
-    except Exception as e:
-        return jsonify([])
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT device_id, google_account, status, last_active FROM devices')
+    rows = cursor.fetchall()
+    conn.close()
+    
+    devices = []
+    for r in rows:
+        devices.append({
+            "device_id": r[0],
+            "account": r[1],
+            "status": 'approved' if r[1] == 'officialwinmyat@gmail.com' else r[2],
+            "active": True if r[3] else False,
+            "is_current_user_admin": session.get('user_email') == 'officialwinmyat@gmail.com'
+        })
+    return jsonify(devices)
 
 @app.route('/get_history', methods=['GET'])
 def get_history():
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('SELECT id, user_info, msg_type, content, filename, store_type, timestamp FROM history ORDER BY id DESC')
-        rows = cursor.fetchall()
-        conn.close()
-        
-        history = []
-        for r in rows:
-            history.append({
-                "id": r['id'],
-                "user": r['user_info'],
-                "type": r['msg_type'],
-                "content": r['content'],
-                "filename": r['filename'],
-                "store": r['store_type'],
-                "timestamp": r['timestamp']
-            })
-        return jsonify(history)
-    except Exception as e:
-        return jsonify([])
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, user_info, msg_type, content, filename, store_type, timestamp FROM history ORDER BY id DESC')
+    rows = cursor.fetchall()
+    conn.close()
+    
+    history = []
+    for r in rows:
+        history.append({
+            "id": r[0],
+            "user": r[1],
+            "type": r[2],
+            "content": r[3],
+            "filename": r[4],
+            "store": r[5],
+            "timestamp": r[6]
+        })
+    return jsonify(history)
 
 @socketio.on('register_device')
 def handle_register_device(data):
@@ -209,28 +193,25 @@ def handle_register_device(data):
     if not dev_id or not google_acc:
         return
 
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
-        row = cursor.fetchone()
-        
-        status = 'approved' if google_acc == 'officialwinmyat@gmail.com' else ('approved' if row and row['status'] == 'approved' else 'pending')
-        
-        if not row:
-            cursor.execute('INSERT INTO devices (device_id, google_account, status, last_active) VALUES (?, ?, ?, ?)',
-                           (dev_id, google_acc, status, datetime.now()))
-            conn.commit()
-            if status == 'pending' and google_acc != 'officialwinmyat@gmail.com':
-                send_approval_email(dev_id, google_acc)
-        else:
-            cursor.execute('UPDATE devices SET google_account = ?, status = ?, last_active = ? WHERE device_id = ?',
-                           (google_acc, status, datetime.now(), dev_id))
-            conn.commit()
-        conn.close()
-        socketio.emit('device_status_update', {'device_id': dev_id})
-    except Exception as e:
-        print("Register device error:", e)
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
+    row = cursor.fetchone()
+    
+    status = 'approved' if google_acc == 'officialwinmyat@gmail.com' else ('approved' if row and row[0] == 'approved' else 'pending')
+    
+    if not row:
+        cursor.execute('INSERT INTO devices (device_id, google_account, status, last_active) VALUES (?, ?, ?, ?)',
+                       (dev_id, google_acc, status, datetime.now()))
+        conn.commit()
+        if status == 'pending' and google_acc != 'officialwinmyat@gmail.com':
+            send_approval_email(dev_id, google_acc)
+    else:
+        cursor.execute('UPDATE devices SET google_account = ?, status = ?, last_active = ? WHERE device_id = ?',
+                       (google_acc, status, datetime.now(), dev_id))
+        conn.commit()
+    conn.close()
+    socketio.emit('device_status_update', {'device_id': dev_id})
 
 @socketio.on('admin_device_action')
 def handle_admin_action(data):
@@ -240,18 +221,15 @@ def handle_admin_action(data):
     dev_id = data.get('device_id')
     action = data.get('action') 
     
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        if action == 'remove':
-            cursor.execute('DELETE FROM devices WHERE device_id = ?', (dev_id,))
-        else:
-            cursor.execute('UPDATE devices SET status = ? WHERE device_id = ?', (action, dev_id))
-        conn.commit()
-        conn.close()
-        socketio.emit('device_status_update', {'device_id': dev_id})
-    except Exception as e:
-        print("Admin device action error:", e)
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    if action == 'remove':
+        cursor.execute('DELETE FROM devices WHERE device_id = ?', (dev_id,))
+    else:
+        cursor.execute('UPDATE devices SET status = ? WHERE device_id = ?', (action, dev_id))
+    conn.commit()
+    conn.close()
+    socketio.emit('device_status_update', {'device_id': dev_id})
 
 @socketio.on('new_message')
 def handle_new_message(data):
@@ -269,40 +247,34 @@ def handle_new_message(data):
     else:
         expire_at = now + timedelta(hours=48)
         
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                       (user, msg_type, content, filename, store, expire_at, now.strftime('%Y-%m-%d %H:%M:%S')))
-        msg_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        
-        socketio.emit('broadcast_message', {
-            "id": msg_id,
-            "user": user,
-            "type": msg_type,
-            "content": content,
-            "filename": filename,
-            "store": store,
-            "timestamp": now.strftime('%Y-%m-%d %H:%M:%S')
-        })
-    except Exception as e:
-        print("New message error:", e)
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                   (user, msg_type, content, filename, store, expire_at, now.strftime('%Y-%m-%d %H:%M:%S')))
+    msg_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    socketio.emit('broadcast_message', {
+        "id": msg_id,
+        "user": user,
+        "type": msg_type,
+        "content": content,
+        "filename": filename,
+        "store": store,
+        "timestamp": now.strftime('%Y-%m-%d %H:%M:%S')
+    })
 
 @socketio.on('delete_message_item')
 def handle_delete_message(data):
     msg_id = data.get('id')
     if msg_id:
-        try:
-            conn = get_db()
-            cursor = conn.cursor()
-            cursor.execute('DELETE FROM history WHERE id = ?', (msg_id,))
-            conn.commit()
-            conn.close()
-            socketio.emit('message_deleted', {"id": msg_id})
-        except Exception as e:
-            print("Delete message error:", e)
+        conn = sqlite3.connect('wma_qq.db')
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM history WHERE id = ?', (msg_id,))
+        conn.commit()
+        conn.close()
+        socketio.emit('message_deleted', {"id": msg_id})
 
 # WebRTC & Video Conference Socket Events
 @socketio.on('trigger_video_call')
@@ -324,15 +296,12 @@ def handle_video_signal(data):
 @socketio.on('reset_storage')
 def handle_reset():
     if session.get('user_email') == 'officialwinmyat@gmail.com':
-        try:
-            conn = get_db()
-            cursor = conn.cursor()
-            cursor.execute('DELETE FROM history')
-            conn.commit()
-            conn.close()
-            socketio.emit('storage_reset')
-        except Exception as e:
-            print("Reset storage error:", e)
+        conn = sqlite3.connect('wma_qq.db')
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM history')
+        conn.commit()
+        conn.close()
+        socketio.emit('storage_reset')
 
 
 HTML_PAGE = """
@@ -446,64 +415,98 @@ HTML_PAGE = """
         <!-- Left Pane: Controls & Admin Panel -->
         <div class="left-pane">
             <h2>WMA QQ Anime Control Panel</h2>
-            <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:#f472b6;"></b> <button onclick="logoutUser()" style="background:#dc2626; padding:4px 10px; width:auto; font-size:11px; margin-left:10px;">Logout</button></div>
+            <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:#f472b6;"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
             
             <div class="card">
-                <h3>Device Status & Control</h3>
-                <div style="font-size: 12px; margin-bottom: 8px; color: #cbd5e1;">Device ID: <span id="myDeviceIdDisplay" style="font-weight:bold; color:#f472b6;"></span></div>
-                <div id="deviceListContainer">Loading devices...</div>
+                <h4>Dynamic Chinese & Japanese Anime Themes</h4>
+                <button onclick="autoGenerateAnimeTheme()">Randomize Anime Character Theme</button>
             </div>
 
+            <!-- Admin Control Panel Card -->
+            <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
+                <h4 style="color: #f59e0b;">👑 Admin Control Panel (Official Win Myat)</h4>
+                <p style="font-size: 11px; color: #cbd5e1; margin: 0 0 8px 0;">ဤနေရာမှသာ Device များကို Approve, Ban သို့မဟုတ် Remove လုပ်နိုင်ပါသည်။</p>
+                <div style="font-size: 12px; color: #facc15; margin-bottom: 5px;">Active & Pending Devices List:</div>
+                <div id="activeDeviceList" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
+            </div>
+
+            <!-- Function 1: Voice Message -->
             <div class="card">
-                <h3>Send Message / Content</h3>
-                <textarea id="msgContent" placeholder="စာ သို့မဟုတ် Code ရေးရန်..." rows="3"></textarea>
-                <input type="file" id="fileInput">
-                <select id="storeType">
+                <h4>Function 1: Voice Message (Max 3s)</h4>
+                <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
+                <div id="voiceOptions" style="display:none; margin-top: 10px;">
+                    <p style="font-size: 12px; margin: 5px 0;">Storage Duration ရွေးပါ:</p>
+                    <button onclick="sendVoice('5m')">5 Minutes</button>
+                    <button onclick="sendVoice('1h')">1 Hour</button>
+                    <button onclick="sendVoice('48h')">48 Hours</button>
+                </div>
+            </div>
+
+            <!-- Function 2: Video Call -->
+            <div class="card">
+                <h4>Function 2: Live Video Call & Conference</h4>
+                <p style="font-size: 12px; color: #cbd5e1;">လိုင်းပေါ်ရှိ အခြားသူများနှင့် Video Call ချိတ်ဆက်ရန် ခလုတ်ကိုနှိပ်ပါ။</p>
+                <button onclick="startVideoCall()" style="background: #2563eb;">Start / Accept Video Call</button>
+            </div>
+
+            <!-- Function 3: Text Message & Custom Notes -->
+            <div class="card">
+                <h4>Function 3: Text & Note Broadcast</h4>
+                <textarea id="textContent" placeholder="Chinese/Japanese Anime quote သို့မဟုတ် မက်ဆေ့ဂျ်ရေးရန်..."></textarea>
+                <select id="textStore">
                     <option value="48h">48 Hours Storage</option>
                     <option value="1h">1 Hour Storage</option>
                     <option value="5m">5 Minutes Storage</option>
                 </select>
-                <button onclick="sendMessage()" style="background: var(--accent-color);">Send to Stream</button>
+                <button onclick="sendText()">Send Broadcast Message</button>
             </div>
 
+            <!-- Function 4: Image/Photo Share -->
             <div class="card">
-                <h3>Start Video Conference</h3>
-                <button onclick="startConference()" style="background: #10b981;">Start Group Video Call</button>
+                <h4>Function 4: Anime Photo Share</h4>
+                <input type="file" id="imageFileInput" accept="image/*" onchange="previewImage(event)">
+                <img id="imagePreviewContainer" class="chat-image-preview" style="display:none;">
+                <select id="imageStore">
+                    <option value="48h">48 Hours Storage</option>
+                    <option value="1h">1 Hour Storage</option>
+                    <option value="5m">5 Minutes Storage</option>
+                </select>
+                <button onclick="sendImage()">Upload & Share Photo</button>
             </div>
         </div>
 
-        <!-- Right Pane: Stream & History -->
+        <!-- Right Pane: Broadcast Chat History Stream -->
         <div class="right-pane">
-            <button id="resetBtn" onclick="resetStorage()">Reset All History</button>
-            <h2>WMA QQ Live History Stream</h2>
+            <button id="resetBtn" onclick="resetStorage()">Reset Storage (Admin)</button>
+            <h3>WMA QQ Live Broadcast Stream & Chat History</h3>
             <div id="historyStream"></div>
         </div>
     </div>
 
     <script>
         const socket = io();
-        let currentUserEmail = '';
-        let isAdmin = false;
-        let localStream = null;
-        let peerConnections = {};
-        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-
-        function getOrCreateDeviceId() {
-            let devId = localStorage.getItem('wma_qq_device_id');
-            if (!devId) {
-                devId = 'dev_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-                localStorage.setItem('wma_qq_device_id', devId);
-            }
-            return devId;
+        let deviceId = localStorage.getItem('wma_device_id');
+        if (!deviceId) {
+            deviceId = 'dev_' + Math.random().toString(36.2, 16).substring(2, 10);
+            localStorage.setItem('wma_device_id', deviceId);
         }
 
-        const deviceId = getOrCreateDeviceId();
-        document.getElementById('myDeviceIdDisplay').innerText = deviceId;
-        document.getElementById('overlayDeviceId').value = deviceId;
+        let currentUserEmail = '';
+        let localStream = null;
+        let peerConnections = {};
+        let rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        let mediaRecorder;
+        let audioChunks = [];
+        let selectedBase64Image = null;
+
+        window.onload = function() {
+            checkSession();
+            loadHistory();
+        };
 
         function togglePasswordVisibility() {
-            const pwdInput = document.getElementById('loginPassword');
-            pwdInput.type = document.getElementById('showPasswordToggle').checked ? 'text' : 'password';
+            const pwd = document.getElementById('loginPassword');
+            pwd.type = document.getElementById('showPasswordToggle').checked ? 'text' : 'password';
         }
 
         function checkSession() {
@@ -512,215 +515,397 @@ HTML_PAGE = """
             .then(data => {
                 if (data.logged_in) {
                     currentUserEmail = data.email;
-                    isAdmin = data.is_admin;
-                    document.getElementById('currentLoggedInEmail').innerText = currentUserEmail;
+                    document.getElementById('currentLoggedInEmailinnerText') = currentUserEmail;
+                    document.getElementById('currentLoggedInEmail').textContent = currentUserEmail;
                     document.getElementById('authOverlay').style.display = 'none';
-                    
-                    if (isAdmin) {
-                        document.getElementById('resetBtn').style.display = 'block';
-                    }
-                    
                     socket.emit('register_device', { device_id: deviceId, google_account: currentUserEmail });
-                    fetchDevices();
-                    fetchHistory();
+                    checkDeviceApprovalStatus();
                 } else {
                     document.getElementById('authOverlay').style.display = 'flex';
-                    document.getElementById('appContainer').style.display = 'none';
-                }
-            });
-        }
-
-        function loginUser() {
-            const email = document.getElementById('loginEmail').value;
-            const password = document.getElementById('loginPassword').value;
-            
-            fetch('/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, password })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    checkSession();
-                } else {
-                    document.getElementById('loginError').innerText = data.error;
                 }
             });
         }
 
         function signupUser() {
-            const email = document.getElementById('loginEmail').value;
+            const email = document.getElementById('loginEmail').value.trim();
             const password = document.getElementById('loginPassword').value;
-            
             fetch('/signup', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ email, password })
             })
             .then(res => res.json())
             .then(data => {
                 if (data.success) {
-                    checkSession();
+                    location.reload();
                 } else {
-                    document.getElementById('loginError').innerText = data.error;
+                    document.getElementById('loginError').textContent = data.error;
+                }
+            });
+        }
+
+        function loginUser() {
+            const email = document.getElementById('loginEmail').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            fetch('/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ email, password })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    document.getElementById('loginError').textContent = data.error;
                 }
             });
         }
 
         function logoutUser() {
-            fetch('/logout', { method: 'POST' }).then(() => {
-                location.reload();
-            });
+            fetch('/logout', {method: 'POST'}).then(() => location.reload());
         }
 
-        function fetchDevices() {
+        function checkDeviceApprovalStatus() {
             fetch('/get_devices')
             .then(res => res.json())
             .then(devices => {
-                let html = '';
-                let myStatus = 'pending';
+                const myDev = devices.find(d => d.device_id === deviceId);
+                const isAdmin = currentUserEmail === 'officialwinmyat@gmail.com';
                 
-                devices.forEach(d => {
-                    if (d.device_id === deviceId) {
-                        myStatus = d.status;
-                    }
-                    const activeBadge = d.active ? '<span class="badge-active"></span>' : '<span class="badge-inactive"></span>';
-                    html += `<div class="device-row">
-                        <div>${activeBadge} <b>${d.account}</b><br><small style="color:#aaa;">${d.device_id}</small></div>
-                        <div>
-                            <span style="color: ${d.status=='approved'?'#22c55e':(d.status=='banned'?'#ef4444':'#facc15')}">${d.status}</span>`;
-                    
-                    if (isAdmin && d.device_id !== deviceId) {
-                        if (d.status !== 'approved') html += ` <button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 6px; font-size:10px; background:#22c55e; width:auto;">Approve</button>`;
-                        if (d.status !== 'banned') html += ` <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 6px; font-size:10px; background:#ef4444; width:auto;">Ban</button>`;
-                        html += ` <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 6px; font-size:10px; background:#64748b; width:auto;">Remove</button>`;
-                    }
-                    html += `</div></div>`;
-                });
-                
-                document.getElementById('deviceListContainer').innerHTML = html;
-                
-                if (myStatus === 'approved' || currentUserEmail === 'officialwinmyat@gmail.com') {
+                if (myDev && (myDev.status === 'approved' || isAdmin)) {
                     document.getElementById('pendingOverlay').style.display = 'none';
                     document.getElementById('appContainer').style.display = 'flex';
-                } else {
+                    if (isAdmin) {
+                        document.getElementById('adminControlCard').style.display = 'block';
+                        document.getElementById('resetBtn').style.display = 'block';
+                        renderAdminDevices(devices);
+                    }
+                } else if (myDev && myDev.status === 'banned') {
+                    document.getElementById('overlayTitle').textContent = 'Access Denied / Banned';
+                    document.getElementById('overlayDesc').textContent = 'သင့် Device အား Admin မှ ပိတ်ပင်ထားပါသည် (Banned)။';
+                    document.getElementById('overlayStatus').textContent = 'Status: Banned ❌';
+                    document.getElementById('overlayStatus').style.color = '#f87171';
+                    document.getElementById('overlayDeviceId').value = deviceId;
                     document.getElementById('pendingOverlay').style.display = 'flex';
-                    document.getElementById('appContainer').style.display = 'none';
-                    document.getElementById('overlayStatus').innerText = `Status: ${myStatus.toUpperCase()} ⏳`;
+                } else {
+                    document.getElementById('overlayDeviceId').value = deviceId;
+                    document.getElementById('pendingOverlay').style.display = 'flex';
                 }
             });
         }
 
-        function adminAction(targetDevId, action) {
-            socket.emit('admin_device_action', { device_id: targetDevId, action: action });
+        function renderAdminDevices(devices) {
+            let html = '';
+            devices.forEach(d => {
+                html += `<div class="device-row">
+                    <span><b>${d.device_id}</b> (${d.account})<br><small style="color:#cbd5e1;">Status: ${d.status}</small></span>
+                    <span>
+                        ${d.status !== 'approved' ? `<button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 6px; font-size:10px; background:#22c55e; width:auto;">Approve</button>` : ''}
+                        ${d.status !== 'banned' ? `<button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 6px; font-size:10px; background:#eab308; width:auto;">Ban</button>` : ''}
+                        <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 6px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
+                    </span>
+                </div>`;
+            });
+            document.getElementById('activeDeviceList').innerHTML = html || 'No devices registered.';
         }
 
-        function sendMessage() {
-            const content = document.getElementById('msgContent').value;
-            const store = document.getElementById('storeType').value;
-            const fileInput = document.getElementById('fileInput');
-            
-            if (!content && fileInput.files.length === 0) return;
-            
-            if (fileInput.files.length > 0) {
-                const file = fileInput.files[0];
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const base64Data = e.target.result;
-                    let msgType = 'text';
-                    let finalContent = content;
-                    
-                    if (file.type.startsWith('image/')) {
-                        msgType = 'image';
-                        finalContent = `<img src="${base64Data}" class="chat-image-preview"><br>${content}`;
-                    } else {
-                        msgType = 'file';
-                        finalContent = `<a href="${base64Data}" download="${file.name}" style="color:#f472b6;">📥 Download ${file.name}</a><br>${content}`;
-                    }
-                    
-                    socket.emit('new_message', {
-                        user: currentUserEmail,
-                        type: msgType,
-                        content: finalContent,
-                        filename: file.name,
-                        store: store
-                    });
-                    
-                    document.getElementById('msgContent').value = '';
-                    fileInput.value = '';
-                };
-                reader.readAsDataURL(file);
-            } else {
-                socket.emit('new_message', {
-                    user: currentUserEmail,
-                    type: 'text',
-                    content: content,
-                    filename: '',
-                    store: store
-                });
-                document.getElementById('msgContent').value = '';
-            }
+        function adminAction(devId, action) {
+            socket.emit('admin_device_action', { device_id: devId, action: action });
         }
 
-        function fetchHistory() {
+        socket.on('device_status_update', (data) => {
+            checkDeviceApprovalStatus();
+        });
+
+        // Chat History & Broadcast Functions
+        function loadHistory() {
             fetch('/get_history')
             .then(res => res.json())
             .then(history => {
-                let html = '';
-                history.forEach(item => {
-                    html += `<div class="history-item">
-                        <b>${item.user}</b> (${item.timestamp})<br>
-                        <div>${item.content}</div>`;
-                    if (isAdmin) {
-                        html += `<div class="msg-actions"><button onclick="deleteMessage(${item.id})" style="background:#ef4444;">Delete</button></div>`;
-                    }
-                    html += `</div>`;
-                });
-                document.getElementById('historyStream').innerHTML = html;
+                const stream = document.getElementById('historyStream');
+                stream.innerHTML = '';
+                history.forEach(item => appendHistoryItem(item));
             });
         }
 
-        function deleteMessage(id) {
-            socket.emit('delete_message_item', { id: id });
+        function appendHistoryItem(item) {
+            const stream = document.getElementById('historyStream');
+            const div = document.createElement('div');
+            div.className = 'history-item';
+            div.id = `msg_${item.id}`;
+            
+            let contentHtml = '';
+            if (item.type === 'text') {
+                contentHtml = `<div>${escapeHtml(item.content)}</div>`;
+            } else if (item.type === 'voice') {
+                contentHtml = `<audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio>`;
+            } else if (item.type === 'image') {
+                contentHtml = `<img src="${item.content}" class="chat-image-preview">`;
+            }
+
+            const isAdmin = currentUserEmail === 'officialwinmyat@gmail.com';
+            div.innerHTML = `
+                <div style="font-size:11px; color:#f472b6; margin-bottom:3px;"><b>${escapeHtml(item.user)}</b> (${item.store} storage) - <span style="color:#94a3b8;">${item.timestamp}</span></div>
+                ${contentHtml}
+                ${isAdmin ? `<div class="msg-actions"><button onclick="deleteMessage(${item.id})" style="background:#dc2626;">Delete</button></div>` : ''}
+            `;
+            stream.appendChild(div);
+        }
+
+        socket.on('broadcast_message', (item) => {
+            appendHistoryItem(item);
+        });
+
+        socket.on('message_deleted', (data) => {
+            const el = document.getElementById(`msg_${data.id}`);
+            if (el) el.remove();
+        });
+
+        socket.on('storage_reset', () => {
+            document.getElementById('historyStream').innerHTML = '';
+            alert('Storage has been reset by Admin.');
+        });
+
+        function sendText() {
+            const text = document.getElementById('textContent').value.trim();
+            const store = document.getElementById('textStore').value;
+            if (!text) return;
+            socket.emit('new_message', {
+                user: currentUserEmail || deviceId,
+                type: 'text',
+                content: text,
+                store: store
+            });
+            document.getElementById('textContent').value = '';
+        }
+
+        function previewImage(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                selectedBase64Image = e.target.result;
+                const img = document.getElementById('imagePreviewContainer');
+                img.src = selectedBase64Image;
+                img.style.display = 'block';
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function sendImage() {
+            if (!selectedBase64Image) return;
+            const store = document.getElementById('imageStore').value;
+            socket.emit('new_message', {
+                user: currentUserEmail || deviceId,
+                type: 'image',
+                content: selectedBase64Image,
+                store: store
+            });
+            selectedBase64Image = null;
+            document.getElementById('imageFileinput') = '';
+            document.getElementById('imagePreviewContainer').style.display = 'none';
+        }
+
+        let isRecording = false;
+        function toggleRecordVoice() {
+            if (!isRecording) {
+                navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+                    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                    mediaRecorder.onstop = () => {
+                        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            window.tempVoiceBase64 = e.target.result;
+                            document.getElementById('voiceOptions').style.display = 'block';
+                        };
+                        reader.readAsDataURL(blob);
+                    };
+                    mediaRecorder.start();
+                    isRecording = true;
+                    document.getElementById('recBtn').textContent = 'Stop & Save Voice (Max 3s)';
+                    setTimeout(() => {
+                        if (isRecording) toggleRecordVoice();
+                    }, 3000);
+                }).catch(err => alert('Microphone permission error: ' + err));
+            } else {
+                mediaRecorder.stop();
+                isRecording = false;
+                document.getElementById('recBtn').textContent = 'Record Voice (3s)';
+            }
+        }
+
+        function sendVoice(store) {
+            if (!window.tempVoiceBase64) return;
+            socket.emit('new_message', {
+                user: currentUserEmail || deviceId,
+                type: 'voice',
+                content: window.tempVoiceBase64,
+                store: store
+            });
+            window.tempVoiceBase64 = null;
+            document.getElementById('voiceOptions').style.display = 'none';
         }
 
         function resetStorage() {
-            if (confirm('Are you sure you want to reset all history?')) {
+            if (confirm('Are you sure you want to reset all broadcast history?')) {
                 socket.emit('reset_storage');
             }
         }
 
-        // Video Call Functions
-        async function startConference() {
+        function autoGenerateAnimeTheme() {
+            const characters = [
+                "Naruto Uzumaki - Hidden Leaf Village (Hokage Vibe)",
+                "Gojo Satoru - Jujutsu Kaisen (Infinity Domain)",
+                "Tanjiro Kamado - Demon Slayer (Hinokami Kagura)",
+                "Luffy - One Piece (Gear 5 Sun God Nika)",
+                "Nezuko Kamado - Demon Slayer Spacial Vibe",
+                "Megumi Fushiguro - Shadow Divine Dogs"
+            ];
+            const chosen = characters[Math.floor(Math.random() * characters.length)];
+            document.getElementById('textContent').value = `✨ WMA QQ Anime Theme Selected: ${chosen} 🌸`;
+        }
+
+        function escapeHtml(text) {
+            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        // --- Multi-User WebRTC Video Call & Conference Implementation ---
+        let activeParticipantsCount = 1;
+
+        function startVideoCall() {
             document.getElementById('videoPopup').style.display = 'block';
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                document.getElementById('localVideo').srcObject = localStream;
-                socket.emit('join_conference', { device_id: deviceId });
-            } catch (err) {
-                alert('Could not access camera/microphone.');
+            document.getElementById('callerInfo').textContent = `Connected as: ${currentUserEmail || deviceId}`;
+            
+            navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+            .then(stream => {
+                localStream = stream;
+                document.getElementById('localVideo').srcObject = stream;
+                socket.emit('join_conference', { sender: deviceId, email: currentUserEmail });
+            })
+            .catch(err => alert('Camera/Microphone permission denied or error: ' + err));
+        }
+
+        socket.on('incoming_video_call', (data) => {
+            // Auto open conference popup when a video call is triggered/accepted
+            if (document.getElementById('videoPopup').style.display !== 'block') {
+                startVideoCall();
             }
+        });
+
+        socket.on('user_joined_conference', (data) => {
+            if (data.sender === deviceId) return;
+            createPeerConnection(data.sender, true);
+        });
+
+        socket.on('user_left_conference', (data) => {
+            if (peerConnections[data.sender]) {
+                peerConnections[data.sender].close();
+                delete peerConnections[data.sender];
+            }
+            const box = document.getElementById(`remote_box_${data.sender}`);
+            if (box) box.remove();
+            updateParticipantCount(-1);
+        });
+
+        socket.on('video_signal_relay', async (data) => {
+            if (data.target !== deviceId) return;
+            const sender = data.sender;
+            
+            let pc = peerConnections[sender];
+            if (!pc) {
+                pc = createPeerConnection(sender, false);
+            }
+
+            if (data.signal.type === 'offer') {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                socket.emit('video_signal', { sender: deviceId, target: sender, signal: pc.localDescription });
+            } else if (data.signal.type === 'answer') {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
+            } else if (data.signal.candidate) {
+                await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
+            }
+        });
+
+        function createPeerConnection(remoteId, isInitiator) {
+            if (peerConnections[remoteId]) return peerConnections[remoteId];
+
+            const pc = new RTCPeerConnection(rtcConfig);
+            peerConnections[remoteId] = pc;
+
+            if (localStream) {
+                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            }
+
+            pc.onicecandidate = event => {
+                if (event.candidate) {
+                    socket.emit('video_signal', { sender: deviceId, target: remoteId, signal: { candidate: event.candidate } });
+                }
+            };
+
+            pc.ontrack = event => {
+                let remoteVideoBox = document.getElementById(`remote_box_${remoteId}`);
+                if (!remoteVideoBox) {
+                    remoteVideoBox = document.createElement('div');
+                    remoteVideoBox.className = 'video-box';
+                    remoteVideoBox.id = `remote_box_${remoteId}`;
+                    remoteVideoBox.innerHTML = `
+                        <video autoplay playsinline></video>
+                        <div class="video-label">Participant: ${remoteId.substring(0,6)}</div>
+                    `;
+                    document.getElementById('videoGridContainer').appendChild(remoteVideoBox);
+                    updateParticipantCount(1);
+                }
+                remoteVideoBox.querySelector('video').srcObject = event.streams[0];
+            };
+
+            if (isInitiator) {
+                pc.createOffer().then(offer => {
+                    pc.setLocalDescription(offer);
+                    socket.emit('video_signal', { sender: deviceId, target: remoteId, signal: offer });
+                });
+            }
+
+            return pc;
+        }
+
+        function updateParticipantCount(change) {
+            activeParticipantsCount += change;
+            if (activeParticipantsCount < 1) activeParticipantsCount = 1;
+            document.getElementById('activeCallCount').textContent = activeParticipantsCount;
         }
 
         function stopConference() {
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
             }
-            socket.emit('leave_conference', { device_id: deviceId });
-            closePopup();
-        }
-
-        function closePopup() {
+            Object.keys(peerConnections).forEach(id => {
+                peerConnections[id].close();
+            });
+            peerConnections = {};
+            
+            // Clear remote video boxes
+            const grid = document.getElementById('videoGridContainer');
+            grid.innerHTML = `
+                <div class="video-box" id="localVideoContainer">
+                    <video id="localVideo" autoplay muted playsinline></video>
+                    <div class="video-label">Local Stream (You)</div>
+                </div>
+            `;
+            activeParticipantsCount = 1;
+            document.getElementById('activeCallCount').textContent = 1;
+            socket.emit('leave_conference', { sender: deviceId });
             document.getElementById('videoPopup').style.display = 'none';
         }
 
-        socket.on('device_status_update', () => { fetchDevices(); });
-        socket.on('broadcast_message', () => { fetchHistory(); });
-        socket.on('message_deleted', () => { fetchHistory(); });
-        socket.on('storage_reset', () => { fetchHistory(); });
-
-        window.onload = checkSession;
+        function closePopup() {
+            stopConference();
+        }
     </script>
 </body>
 </html>
