@@ -48,7 +48,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             email TEXT UNIQUE,
-            password TEXT
+            password TEXT,
+            device_id TEXT,
+            remember_token TEXT
         )
     ''')
     conn.commit()
@@ -81,17 +83,21 @@ def index():
 
 @app.route('/signup', methods=['POST'])
 def signup():
-    data = request.json or {}
+    data = request.json
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
+    device_id = data.get('device_id', '')
+    
     if not email or not password:
         return jsonify({"success": False, "error": "Email နှင့် Password ထည့်ရန် လိုအပ်ပါသည်။"})
+    
     try:
         conn = sqlite3.connect('wma_qq.db')
         cursor = conn.cursor()
-        cursor.execute('INSERT INTO users (email, password) VALUES (?, ?)', (email, password))
+        cursor.execute('INSERT INTO users (email, password, device_id) VALUES (?, ?, ?)', (email, password, device_id))
         conn.commit()
         conn.close()
+        
         session['user_email'] = email
         session['is_admin'] = (email == 'officialwinmyat@gmail.com')
         return jsonify({"success": True, "is_admin": session['is_admin']})
@@ -102,37 +108,77 @@ def signup():
 
 @app.route('/login', methods=['POST'])
 def login():
-    data = request.json or {}
+    data = request.json
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
+    remember = data.get('remember', False)
+    device_id = data.get('device_id', '')
+    
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
     cursor.execute('SELECT password FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
-    conn.close()
+    
     if row and row[0] == password:
         session['user_email'] = email
         session['is_admin'] = (email == 'officialwinmyat@gmail.com')
-        return jsonify({"success": True, "is_admin": session['is_admin']})
+        
+        if remember:
+            token = f"token_{email}_{device_id}"
+            cursor.execute('UPDATE users SET remember_token = ?, device_id = ? WHERE email = ?', (token, device_id, email))
+            conn.commit()
+        
+        conn.close()
+        return jsonify({"success": True, "is_admin": session['is_admin'], "remember_token": f"token_{email}_{device_id}" if remember else ""})
     else:
+        conn.close()
         return jsonify({"success": False, "error": "Email သို့မဟုတ် Password မှားယွင်းနေပါသည်။"})
 
-@app.route('/forgot_password', methods=['POST'])
-def forgot_password():
-    data = request.json or {}
+@app.route('/check_remember', methods=['POST'])
+def check_remember():
+    data = request.json
     email = data.get('email', '').strip().lower()
-    if not email:
-        return jsonify({"success": False, "error": "ကျေးဇူးပြု၍ Email ထည့်ပါ။"})
+    token = data.get('token', '')
+    device_id = data.get('device_id', '')
     
+    if not email or not token or not device_id:
+        return jsonify({"logged_in": False})
+        
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT password FROM users WHERE email = ?', (email,))
+    cursor.execute('SELECT remember_token, device_id FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
     conn.close()
     
+    if row and row[0] == token and row[1] == device_id:
+        session['user_email'] = email
+        is_admin = (email == 'officialwinmyat@gmail.com')
+        session['is_admin'] = is_admin
+        return jsonify({"logged_in": True, "email": email, "is_admin": is_admin})
+    
+    return jsonify({"logged_in": False})
+
+@app.route('/reset_password_google', methods=['POST'])
+def reset_password_google():
+    data = request.json
+    email = data.get('email', '').strip().lower()
+    new_password = data.get('new_password', '')
+    
+    if not email or not new_password:
+        return jsonify({"success": False, "error": "Email နှင့် Password အသစ်ထည့်ရန် လိုအပ်ပါသည်။"})
+        
+    conn = sqlite3.connect('wma_qq.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
+    row = cursor.fetchone()
+    
     if row:
-        return jsonify({"success": True, "message": "Google Account ချိတ်ဆက်မှု အောင်မြင်ပါသည်။ Password ကို အောက်တွင် ဖော်ပြပေးလိုက်ပါသည် -", "password": row[0]})
+        cursor.execute('UPDATE users SET password = ? WHERE email = ?', (new_password, email))
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True})
     else:
+        conn.close()
         return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်မရှိပါ။"})
 
 @app.route('/logout', methods=['POST'])
@@ -162,6 +208,7 @@ def get_devices():
     cursor.execute('SELECT device_id, google_account, status, last_active FROM devices')
     rows = cursor.fetchall()
     conn.close()
+    
     devices = []
     for r in rows:
         devices.append({
@@ -180,6 +227,7 @@ def get_history():
     cursor.execute('SELECT id, user_info, msg_type, content, filename, store_type, timestamp FROM history ORDER BY id DESC')
     rows = cursor.fetchall()
     conn.close()
+    
     history = []
     for r in rows:
         history.append({
@@ -199,6 +247,7 @@ def handle_register_device(data):
     google_acc = session.get('user_email', data.get('google_account', ''))
     if not dev_id or not google_acc:
         return
+        
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
     cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
@@ -223,6 +272,7 @@ def handle_admin_action(data):
         return
     dev_id = data.get('device_id')
     action = data.get('action')
+    
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
     if action == 'remove':
@@ -245,6 +295,7 @@ def handle_new_message(data):
     content = data.get('content')
     filename = data.get('filename', '')
     store = data.get('store', '48h')
+    
     now = datetime.now()
     if store == '5m':
         expire_at = now + timedelta(minutes=5)
@@ -252,10 +303,10 @@ def handle_new_message(data):
         expire_at = now + timedelta(hours=1)
     else:
         expire_at = now + timedelta(hours=48)
-    
+        
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', 
+    cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)',
                    (user, msg_type, content, filename, store, expire_at, now.strftime('%Y-%m-%d %H:%M:%S')))
     msg_id = cursor.lastrowid
     conn.commit()
@@ -304,673 +355,611 @@ HTML_PAGE = """
 <!DOCTYPE html>
 <html>
 <head>
-<title>WMA QQ - Chinese & Japanese Anime Spacial Web App</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
-<style>
-:root {
-    --bg-color: #0f172a;
-    --panel-bg: rgba(20, 24, 33, 0.85);
-    --text-color: #f8fafc;
-    --accent-color: #ec4899;
-    --chat-bg: rgba(10, 14, 23, 0.8);
-    --stream-bg: rgba(20, 24, 33, 0.8);
-    --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80');
-}
-body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    margin: 0; padding: 0;
-    background-color: var(--bg-color);
-    background-image: var(--bg-image);
-    background-size: cover; background-position: center; background-attachment: fixed;
-    color: var(--text-color);
-    display: flex; height: 100vh; overflow: hidden;
-}
-.left-pane {
-    width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box;
-    background: var(--panel-bg); border-right: 3px solid var(--accent-color);
-    position: relative; backdrop-filter: blur(12px);
-}
-.right-pane {
-    width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box;
-    background: var(--stream-bg); position: relative; backdrop-filter: blur(12px);
-    border-left: 3px solid var(--accent-color);
-}
-.card {
-    background: rgba(255,255,255,0.06); padding: 15px; border-radius: 8px; margin-bottom: 15px;
-    border: 2px solid var(--accent-color); backdrop-filter: blur(8px);
-    box-shadow: 0 0 12px rgba(236,72,153,0.25);
-}
-input, textarea, select, button {
-    width: 100%; padding: 10px; margin: 8px 0; border-radius: 5px;
-    border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.9);
-    color: white; box-sizing: border-box;
-}
-button {
-    background: var(--accent-color); cursor: pointer; font-weight: bold; border: 2px solid #fff; transition: 0.2s;
-}
-button:hover { opacity: 0.85; transform: scale(1.01); }
-#historyStream {
-    flex: 1; overflow-y: auto; background: var(--chat-bg);
-    border: 2px solid var(--accent-color); border-radius: 8px; padding: 10px;
-    box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 40px;
-}
-.history-item {
-    padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.07);
-    border-left: 6px solid var(--accent-color); border-radius: 6px; font-size: 13px;
-    word-break: break-all; position: relative;
-}
-.msg-actions { margin-top: 8px; display: flex; gap: 6px; }
-.msg-actions button { padding: 4px 10px; font-size: 11px; width: auto; margin: 0; border-radius: 4px; }
-#resetBtn {
-    position: absolute; top: 15px; right: 15px; z-index: 999;
-    background: #dc2626; color: white; padding: 6px 12px; border-radius: 4px;
-    font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none;
-}
-#videoPopup {
-    display: none; position: fixed; top: 10%; left: 15%; width: 70%;
-    background: rgba(20, 24, 33, 0.98); border: 3px solid var(--accent-color);
-    border-radius: 10px; padding: 20px; z-index: 1000;
-    box-shadow: 0 0 35px rgba(236,72,153,0.5); text-align: center; backdrop-filter: blur(18px);
-}
-.video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; max-height: 380px; overflow-y: auto; margin: 15px 0; }
-.video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 6px; padding: 5px; }
-video { width: 100%; height: 160px; object-fit: cover; border-radius: 4px; background: #000; }
-.device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
-#appContainer { display: none; width: 100%; height: 100vh; }
-#authOverlay, #pendingOverlay {
-    position: fixed; top: 0; left: 0; width: 100%; height: 100vh;
-    background: rgba(10, 14, 23, 0.96); z-index: 9999;
-    display: flex; flex-direction: column; justify-content: center; align-items: center;
-    text-align: center; padding: 20px;
-}
-#pendingOverlay { display: none; }
-.chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 1px solid var(--accent-color); display: block; }
-</style>
+    <title>WMA QQ - Chinese & Japanese Anime Spacial Web App</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --panel-bg: rgba(20, 24, 33, 0.85);
+            --text-color: #f8fafc;
+            --accent-color: #ec4899;
+            --chat-bg: rgba(10, 14, 23, 0.8);
+            --stream-bg: rgba(20, 24, 33, 0.8);
+            --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80');
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0; padding: 0;
+            background-color: var(--bg-color);
+            background-image: var(--bg-image);
+            background-size: cover; background-position: center; background-attachment: fixed;
+            color: var(--text-color);
+            display: flex; height: 100vh; overflow: hidden;
+        }
+        .left-pane {
+            width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box;
+            background: var(--panel-bg); border-right: 3px solid var(--accent-color);
+            position: relative; backdrop-filter: blur(12px);
+        }
+        .right-pane {
+            width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box;
+            background: var(--stream-bg); position: relative; backdrop-filter: blur(12px);
+            border-left: 3px solid var(--accent-color);
+        }
+        .card {
+            background: rgba(255,255,255,0.06); padding: 15px; border-radius: 8px; margin-bottom: 15px;
+            border: 2px solid var(--accent-color); backdrop-filter: blur(8px);
+            box-shadow: 0 0 12px rgba(236,72,153,0.25);
+        }
+        input, textarea, select, button {
+            width: 100%; padding: 10px; margin: 8px 0; border-radius: 5px;
+            border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.9);
+            color: white; box-sizing: border-box;
+        }
+        button {
+            background: var(--accent-color); cursor: pointer; font-weight: bold; border: 2px solid #fff; transition: 0.2s;
+        }
+        button:hover { opacity: 0.85; transform: scale(1.01); }
+        #historyStream {
+            flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color);
+            border-radius: 8px; padding: 10px; box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 40px;
+        }
+        .history-item {
+            padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.07);
+            border-left: 6px solid var(--accent-color); border-radius: 6px; font-size: 13px; word-break: break-all; position: relative;
+        }
+        .msg-actions { margin-top: 8px; display: flex; gap: 6px; }
+        .msg-actions button { padding: 4px 10px; font-size: 11px; width: auto; margin: 0; border-radius: 4px; }
+        #resetBtn {
+            position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white;
+            padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none;
+        }
+        #videoPopup {
+            display: none; position: fixed; top: 10%; left: 15%; width: 70%;
+            background: rgba(20, 24, 33, 0.98); border: 3px solid var(--accent-color); border-radius: 10px;
+            padding: 20px; z-index: 1000; box-shadow: 0 0 35px rgba(236,72,153,0.5); text-align: center; backdrop-filter: blur(18px);
+        }
+        .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; max-height: 380px; overflow-y: auto; margin: 15px 0; }
+        .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 6px; padding: 5px; }
+        video { width: 100%; height: 160px; object-fit: cover; border-radius: 4px; background: #000; }
+        .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
+        #appContainer { display: none; width: 100%; height: 100vh; }
+        #authOverlay, #pendingOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100vh;
+            background: rgba(10, 14, 23, 0.96); z-index: 9999; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; text-align: center; padding: 20px;
+        }
+        #pendingOverlay { display: none; }
+        .chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 1px solid var(--accent-color); display: block; }
+    </style>
 </head>
 <body>
-
-<!-- Login / Sign Up Screen -->
-<div id="authOverlay">
-    <h2 style="color: #f472b6;">WMA QQ - Chinese & Japanese Anime Hub</h2>
-    <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password ဖြင့် ဝင်ရောက်ပါ (သို့မဟုတ် အကောင့်အသစ်ဖွင့်ပါ)</p>
-    <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 8px; border: 2px solid var(--accent-color); width: 320px;">
-        <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
-        <input type="password" id="loginPassword" placeholder="Password">
-        <div style="display: flex; align-items: center; font-size: 12px; color: #cbd5e1; margin: 5px 0; text-align: left;">
-            <input type="checkbox" id="showPasswordToggle" style="width: 16px; height: 16px; margin-right: 8px; accent-color: var(--accent-color); cursor: pointer;">
-            <label for="showPasswordToggle" style="cursor: pointer;">Password ပြရန်</label>
-        </div>
-        <div style="display: flex; align-items: center; font-size: 12px; color: #cbd5e1; margin: 5px 0 10px 0; text-align: left;">
-            <input type="checkbox" id="rememberMeToggle" style="width: 16px; height: 16px; margin-right: 8px; accent-color: var(--accent-color); cursor: pointer;">
-            <label for="rememberMeToggle" style="cursor: pointer;">Save Password (Remember Me)</label>
-        </div>
-        <button id="loginBtn" type="button" style="background: var(--accent-color); margin-top: 5px;">Login</button>
-        <button id="signupBtn" type="button" style="background: #3b82f6; margin-top: 5px;">Sign Up (အကောင့်သစ်ဖွင့်ရန်)</button>
-        <div style="margin-top: 8px; text-align: right;">
-            <a href="#" id="forgotPasswordLink" style="color: #f472b6; font-size: 12px; text-decoration: underline;">Forget Password?</a>
-        </div>
-        <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
-    </div>
-</div>
-
-<!-- Pending / Ban Access Block Screen -->
-<div id="pendingOverlay">
-    <h2 id="overlayTitle" style="color: #f472b6;">WMA QQ - Device Verification Required</h2>
-    <p id="overlayDesc" style="max-width: 500px; color: #cbd5e1; margin: 15px 0;">သင့် Device သည် Admin (officialwinmyat@gmail.com) ထံမှ Approve အတည်ပြုချက် ရယူရန် လိုအပ်နေပါသည်။</p>
-    <div style="background: rgba(255,255,255,0.08); padding: 15px; border-radius: 8px; border: 2px solid var(--accent-color); margin-bottom: 15px; width: 320px;">
-        <input type="text" id="overlayDeviceId" readonly style="text-align:center; font-weight:bold;">
-        <div id="overlayStatus" style="font-size: 14px; color: #facc15; font-weight: bold; margin-top: 10px;">Status: Pending Approval ⏳</div>
-    </div>
-    <button id="pendingLogoutBtn" type="button" style="background: #dc2626; width: auto; padding: 8px 15px;">Logout</button>
-</div>
-
-<!-- Main Application Container -->
-<div id="appContainer">
-    <!-- Video Conference Popup -->
-    <div id="videoPopup">
-        <h3>WMA QQ - Anime Video Conference</h3>
-        <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: #f472b6;"></div>
-        <div class="video-grid" id="videoGridContainer">
-            <div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>
-        </div>
-        <div class="actions" style="margin-top: 15px; display: flex; justify-content: center; gap: 10px;">
-            <button onclick="stopConference()" style="background: #ca8a04; width: auto; padding: 8px 15px;">Stop Video Conference</button>
-            <button onclick="closePopup()" style="background: #dc2626; width: auto; padding: 8px 15px;">Close</button>
+    <!-- Login / Sign Up Screen -->
+    <div id="authOverlay">
+        <h2 style="color: #f472b6;">WMA QQ - Chinese & Japanese Anime Hub</h2>
+        <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password ဖြင့် ဝင်ရောက်ပါ (သို့မဟုတ် အကောင့်အသစ်ဖွင့်ပါ)</p>
+        <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 8px; border: 2px solid var(--accent-color); width: 320px;">
+            <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
+            <input type="password" id="loginPassword" placeholder="Password">
+            <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0;">
+                <input type="checkbox" id="showPasswordToggle" onclick="togglePasswordVisibility()" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Password ပြရန်
+            </div>
+            <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0 10px 0;">
+                <input type="checkbox" id="rememberMeToggle" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Remember Me (အကောင့်မှတ်ထားရန်)
+            </div>
+            <button onclick="loginUser()" style="background: var(--accent-color); margin-top: 5px;">Login</button>
+            <button onclick="signupUser()" style="background: #3b82f6; margin-top: 5px;">Sign Up (အကောင့်သစ်ဖွင့်ရန်)</button>
+            <button onclick="openForgetPassword()" style="background: #ca8a04; margin-top: 5px; font-size: 12px;">Forget Password? (Google Account ဖြင့် Reset လုပ်ရန်)</button>
+            <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
     </div>
 
-    <div class="left-pane">
-        <h2>WMA QQ Anime Control Panel</h2>
-        <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:#f472b6;"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
-        
-        <div class="card">
-            <h4>Dynamic Chinese & Japanese Anime Themes</h4>
-            <button onclick="autoGenerateAnimeTheme()">Randomize Anime Character Theme</button>
+    <!-- Pending / Ban Access Block Screen -->
+    <div id="pendingOverlay">
+        <h2 id="overlayTitle" style="color: #f472b6;">WMA QQ - Device Verification Required</h2>
+        <p id="overlayDesc" style="max-width: 500px; color: #cbd5e1; margin: 15px 0;">သင့် Device သည် Admin (officialwinmyat@gmail.com) ထံမှ Approve အတည်ပြုချက် ရယူရန် လိုအပ်နေပါသည်။</p>
+        <div style="background: rgba(255,255,255,0.08); padding: 15px; border-radius: 8px; border: 2px solid var(--accent-color); margin-bottom: 15px; width: 320px;">
+            <input type="text" id="overlayDeviceId" readonly style="text-align:center; font-weight:bold;">
+            <div id="overlayStatus" style="font-size: 14px; color: #facc15; font-weight: bold; margin-top: 10px;">Status: Pending Approval ⏳</div>
         </div>
+        <button onclick="logoutUser()" style="background: #dc2626; width: auto; padding: 8px 15px;">Logout</button>
+    </div>
 
-        <!-- Admin Control Panel Card -->
-        <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
-            <h4 style="color: #f59e0b;">👑 Admin Control Panel (Official Win Myat)</h4>
-            <p style="font-size: 11px; color: #cbd5e1; margin: 0 0 8px 0;">ဤနေရာမှသာ Device များကို Approve, Ban သို့မဟုတ် Remove လုပ်နိုင်ပါသည်။</p>
-            <div style="font-size: 12px; color: #facc15; margin-bottom: 5px;">Active & Pending Devices List:</div>
-            <div id="activeDeviceList" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
-        </div>
-
-        <!-- Function 1: Voice Message -->
-        <div class="card">
-            <h4>Function 1: Voice Message (Max 3s)</h4>
-            <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
-            <div id="voiceOptions" style="display:none; margin-top: 10px;">
-                <p style="font-size: 12px; margin: 5px 0;">Storage Duration ရွေးပါ:</p>
-                <button onclick="sendVoice('5m')">5 Minutes</button>
-                <button onclick="sendVoice('1h')">1 Hour</button>
-                <button onclick="sendVoice('48h')">48 Hours</button>
+    <!-- Main Application Container -->
+    <div id="appContainer">
+        <!-- Video Conference Popup -->
+        <div id="videoPopup">
+            <h3>WMA QQ - Anime Video Conference</h3>
+            <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: #f472b6;"></div>
+            <div class="video-grid" id="videoGridContainer">
+                <div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>
+            </div>
+            <div class="actions" style="margin-top: 15px; display: flex; justify-content: center; gap: 10px;">
+                <button onclick="stopConference()" style="background: #ca8a04; width: auto; padding: 8px 15px;">Stop Video Conference</button>
+                <button onclick="closePopup()" style="background: #dc2626; width: auto; padding: 8px 15px;">Close</button>
             </div>
         </div>
 
-        <!-- Function 2: Video Call -->
-        <div class="card">
-            <h4>Function 2: Video Call (10s)</h4>
-            <button onclick="triggerVideoCall()" style="background: #16a34a;">Call All Active Users (10s)</button>
+        <div class="left-pane">
+            <h2>WMA QQ Anime Control Panel</h2>
+            <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:#f472b6;"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
+            <div class="card">
+                <h4>Dynamic Chinese & Japanese Anime Themes</h4>
+                <button onclick="autoGenerateAnimeTheme()">Randomize Anime Character Theme</button>
+            </div>
+
+            <!-- Admin Control Panel Card -->
+            <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
+                <h4 style="color: #f59e0b;">👑 Admin Control Panel (Official Win Myat)</h4>
+                <p style="font-size: 11px; color: #cbd5e1; margin: 0 0 8px 0;">ဤနေရာမှသာ Device များကို Approve, Ban သို့မဟုတ် Remove လုပ်နိုင်ပါသည်။ (Remove လုပ်ပါက Users database မှပါ ဖျက်ပစ်မည်)</p>
+                <div style="font-size: 12px; color: #facc15; margin-bottom: 5px;">Active & Pending Devices List:</div>
+                <div id="activeDeviceList" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
+            </div>
+
+            <!-- Function 1: Voice Message -->
+            <div class="card">
+                <h4>Function 1: Voice Message (Max 3s)</h4>
+                <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
+                <div id="voiceOptions" style="display:none; margin-top: 10px;">
+                    <p style="font-size: 12px; margin: 5px 0;">Storage Duration ရွေးပါ:</p>
+                    <button onclick="sendVoice('5m')">5 Minutes</button>
+                    <button onclick="sendVoice('1h')">1 Hour</button>
+                    <button onclick="sendVoice('48h')">48 Hours</button>
+                </div>
+            </div>
+
+            <!-- Function 2: Video Call -->
+            <div class="card">
+                <h4>Function 2: Video Call (10s)</h4>
+                <button onclick="triggerVideoCall()" style="background: #16a34a;">Call All Active Users (10s)</button>
+            </div>
+
+            <!-- Function 3: Text & Universal Equation -->
+            <div class="card">
+                <h4>Function 3: Text & Universal Equation</h4>
+                <textarea id="textContent" rows="3" placeholder="Write text or equation (e.g. 50 * 20 =)" oninput="solveEquation(this)"></textarea>
+                <button onclick="sendText()">Send Text (48h)</button>
+            </div>
+
+            <!-- Function 4: File or Image -->
+            <div class="card">
+                <h4>Function 4: Original File or Image (48h)</h4>
+                <input type="file" id="fileInput" onchange="handleFileSelected(this)">
+                <button id="sendFileBtn" onclick="sendFile()" disabled style="opacity: 0.5;">Send File / Image</button>
+            </div>
         </div>
 
-        <!-- Function 3: Text & Universal Equation -->
-        <div class="card">
-            <h4>Function 3: Text & Universal Equation</h4>
-            <textarea id="textContent" rows="3" placeholder="Write text or equation (e.g. 50 * 20 =)" oninput="solveEquation(this)"></textarea>
-            <button onclick="sendText()">Send Text (48h)</button>
-        </div>
-
-        <!-- Function 4: File or Image -->
-        <div class="card">
-            <h4>Function 4: Original File or Image (48h)</h4>
-            <input type="file" id="fileInput" onchange="handleFileSelected(this)">
-            <button id="sendFileBtn" onclick="sendFile()" disabled style="opacity: 0.5;">Send File / Image</button>
+        <div class="right-pane" id="rightPane">
+            <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
+            <h3>WMA QQ - Live Chat & History Stream</h3>
+            <div id="historyStream"></div>
         </div>
     </div>
 
-    <div class="right-pane" id="rightPane">
-        <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
-        <h3>WMA QQ - Live Chat & History Stream</h3>
-        <div id="historyStream"></div>
-    </div>
-</div>
+    <script>
+        const socket = io();
+        let mediaRecorder;
+        let audioChunks = [];
+        let localStream = null;
+        let selectedFileBase64 = null;
+        let selectedFileName = '';
 
-<script>
-const socket = io();
-let mediaRecorder;
-let audioChunks = [];
-let localStream = null;
-let peerConnections = {};
-let selectedFileBase64 = null;
-let selectedFileName = '';
-let selectedFileType = '';
+        const animeThemes = [
+            { name: "Naruto Uzumaki", bg: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#f97316" },
+            { name: "Gojo Satoru", bg: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", accent: "#3b82f6" },
+            { name: "Wei Wuxian (MDZS)", bg: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", accent: "#a855f7" },
+            { name: "Nezuko Kamado", bg: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" }
+        ];
 
-const animeThemes = [
-    { name: "Naruto Uzumaki", bg: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#f97316" },
-    { name: "Gojo Satoru", bg: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", accent: "#3b82f6" },
-    { name: "Wei Wuxian (MDZS)", bg: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", accent: "#a855f7" },
-    { name: "Nezuko Kamado", bg: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" }
-];
+        function autoGenerateAnimeTheme() {
+            const theme = animeThemes[Math.floor(Math.random() * animeThemes.length)];
+            document.documentElement.style.setProperty('--accent-color', theme.accent);
+            document.documentElement.style.setProperty('--bg-image', `url('${theme.bg}')`);
+            alert("Theme switched to anime style: " + theme.name);
+        }
 
-function autoGenerateAnimeTheme() {
-    const theme = animeThemes[Math.floor(Math.random() * animeThemes.length)];
-    document.documentElement.style.setProperty('--accent-color', theme.accent);
-    document.documentElement.style.setProperty('--bg-image', `url('${theme.bg}')`);
-    alert("Theme switched to anime style: " + theme.name);
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    const showPwdToggle = document.getElementById('showPasswordToggle');
-    if (showPwdToggle) {
-        showPwdToggle.addEventListener('change', function() {
+        function togglePasswordVisibility() {
             const pwd = document.getElementById('loginPassword');
-            if (pwd) {
-                pwd.type = this.checked ? 'text' : 'password';
+            const showToggle = document.getElementById('showPasswordToggle');
+            pwd.type = showToggle.checked ? 'text' : 'password';
+        }
+
+        function getDeviceId() {
+            let devId = localStorage.getItem('wma_device_id');
+            if (!devId) {
+                devId = 'device_' + Math.random().toString(36).substring(2, 15);
+                localStorage.setItem('wma_device_id', devId);
+            }
+            return devId;
+        }
+
+        // Check Session & Remember Me on Load
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedEmail = localStorage.getItem('wma_remember_email');
+            const savedToken = localStorage.getItem('wma_remember_token');
+            const devId = getDeviceId();
+
+            if (savedEmail && savedToken) {
+                fetch('/check_remember', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({email: savedEmail, token: savedToken, device_id: devId})
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.logged_in) {
+                        document.getElementById('authOverlay').style.display = 'none';
+                        document.getElementById('appContainer').style.display = 'flex';
+                        document.getElementById('currentLoggedInEmail').innerText = data.email;
+                        if (data.is_admin) {
+                            document.getElementById('adminControlCard').style.display = 'block';
+                            document.getElementById('resetBtn').style.display = 'block';
+                        }
+                        registerDeviceWithServer(data.email);
+                    } else {
+                        checkNormalSession();
+                    }
+                });
+            } else {
+                checkNormalSession();
             }
         });
-    }
 
-    const loginBtn = document.getElementById('loginBtn');
-    if (loginBtn) {
-        loginBtn.addEventListener('click', loginUser);
-    }
-
-    const signupBtn = document.getElementById('signupBtn');
-    if (signupBtn) {
-        signupBtn.addEventListener('click', signupUser);
-    }
-
-    const forgotLink = document.getElementById('forgotPasswordLink');
-    if (forgotLink) {
-        forgotLink.addEventListener('click', forgotPassword);
-    }
-
-    const pendingLogoutBtn = document.getElementById('pendingLogoutBtn');
-    if (pendingLogoutBtn) {
-        pendingLogoutBtn.addEventListener('click', logoutUser);
-    }
-
-    const rememberedEmail = localStorage.getItem('wma_saved_email');
-    const rememberedPassword = localStorage.getItem('wma_saved_password');
-    const rememberedDevice = localStorage.getItem('wma_saved_device');
-    const currentDevId = getDeviceId();
-
-    if (rememberedEmail && rememberedPassword && rememberedDevice === currentDevId) {
-        fetch('/login', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({email: rememberedEmail, password: rememberedPassword})
-        })
-        .then(res => res.json())
-        .then(data => {
-            checkSessionAndInit();
-        }).catch(() => {
-            checkSessionAndInit();
-        });
-    } else {
-        checkSessionAndInit();
-    }
-});
-
-function getDeviceId() {
-    let devId = localStorage.getItem('wma_device_id');
-    if (!devId) {
-        devId = 'device_' + Math.random().toString(36).substring(2, 15);
-        localStorage.setItem('wma_device_id', devId);
-    }
-    return devId;
-}
-
-function checkSessionAndInit() {
-    fetch('/check_session')
-    .then(res => res.json())
-    .then(data => {
-        if (data.logged_in) {
-            document.getElementById('authOverlay').style.display = 'none';
-            document.getElementById('appContainer').style.display = 'flex';
-            document.getElementById('currentLoggedInEmail').innerText = data.email;
-            if (data.is_admin) {
-                document.getElementById('adminControlCard').style.display = 'block';
-                document.getElementById('resetBtn').style.display = 'block';
-            }
-            registerDeviceWithServer(data.email);
-        } else {
-            document.getElementById('authOverlay').style.display = 'flex';
-        }
-    });
-}
-
-function loginUser() {
-    const emailField = document.getElementById('loginEmail');
-    const passwordField = document.getElementById('loginPassword');
-    const rememberMeToggle = document.getElementById('rememberMeToggle');
-    
-    if (!emailField || !passwordField) return;
-    
-    const email = emailField.value.trim();
-    const password = passwordField.value;
-    const rememberMe = rememberMeToggle ? rememberMeToggle.checked : false;
-
-    fetch('/login', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({email, password})
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            if (rememberMe) {
-                localStorage.setItem('wma_saved_email', email);
-                localStorage.setItem('wma_saved_password', password);
-                localStorage.setItem('wma_saved_device', getDeviceId());
-            } else {
-                localStorage.removeItem('wma_saved_email');
-                localStorage.removeItem('wma_saved_password');
-                localStorage.removeItem('wma_saved_device');
-            }
-            location.reload();
-        } else {
-            const errDiv = document.getElementById('loginError');
-            if (errDiv) errDiv.innerText = data.error;
-        }
-    }).catch(err => {
-        const errDiv = document.getElementById('loginError');
-        if (errDiv) errDiv.innerText = "Connection error: " + err;
-    });
-}
-
-function signupUser() {
-    const emailField = document.getElementById('loginEmail');
-    const passwordField = document.getElementById('loginPassword');
-    
-    if (!emailField || !passwordField) return;
-    
-    const email = emailField.value.trim();
-    const password = passwordField.value;
-
-    fetch('/signup', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({email, password})
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            location.reload();
-        } else {
-            const errDiv = document.getElementById('loginError');
-            if (errDiv) errDiv.innerText = data.error;
-        }
-    }).catch(err => {
-        const errDiv = document.getElementById('loginError');
-        if (errDiv) errDiv.innerText = "Connection error: " + err;
-    });
-}
-
-function forgotPassword(event) {
-    event.preventDefault();
-    const email = prompt("ကျေးဇူးပြု၍ သင်၏ အကောင့်သုံး Email ထည့်ပါ:");
-    if (!email) return;
-
-    fetch('/forgot_password', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({email: email.trim().toLowerCase()})
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            alert(data.message + "\nPassword: " + data.password);
-        } else {
-            alert(data.error);
-        }
-    }).catch(err => {
-        alert("Connection error: " + err);
-    });
-}
-
-function logoutUser() {
-    localStorage.removeItem('wma_saved_email');
-    localStorage.removeItem('wma_saved_password');
-    localStorage.removeItem('wma_saved_device');
-    fetch('/logout', {method: 'POST'}).then(() => location.reload()).catch(() => location.reload());
-}
-
-function registerDeviceWithServer(email) {
-    const devId = getDeviceId();
-    socket.emit('register_device', {device_id: devId, google_account: email});
-    fetchDevices();
-}
-
-socket.on('device_status_update', () => {
-    fetchDevices();
-});
-
-function fetchDevices() {
-    fetch('/get_devices')
-    .then(res => res.json())
-    .then(devices => {
-        const devId = getDeviceId();
-        let currentDev = devices.find(d => d.device_id === devId);
-        if (currentDev) {
-            if (currentDev.status === 'pending' && currentDev.account !== 'officialwinmyat@gmail.com') {
-                document.getElementById('pendingOverlay').style.display = 'flex';
-                document.getElementById('overlayDeviceId').value = devId;
-                document.getElementById('overlayStatus').innerText = "Status: Pending Approval ⏳";
-            } else if (currentDev.status === 'banned') {
-                document.getElementById('pendingOverlay').style.display = 'flex';
-                document.getElementById('overlayDeviceId').value = devId;
-                document.getElementById('overlayStatus').innerText = "Status: Banned ❌";
-            } else {
-                document.getElementById('pendingOverlay').style.display = 'none';
-            }
-        }
-        const listContainer = document.getElementById('activeDeviceList');
-        if (listContainer) {
-            listContainer.innerHTML = '';
-            devices.forEach(d => {
-                let row = document.createElement('div');
-                row.className = 'device-row';
-                row.innerHTML = `<span><b>${d.device_id}</b> (${d.account}) [${d.status}]</span>
-                    <div>
-                        <button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 6px; font-size:10px; background:#16a34a; width:auto;">Approve</button>
-                        <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 6px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
-                        <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 6px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
-                    </div>`;
-                listContainer.appendChild(row);
+        function checkNormalSession() {
+            fetch('/check_session')
+            .then(res => res.json())
+            .then(data => {
+                if (data.logged_in) {
+                    document.getElementById('authOverlay').style.display = 'none';
+                    document.getElementById('appContainer').style.display = 'flex';
+                    document.getElementById('currentLoggedInEmail').innerText = data.email;
+                    if (data.is_admin) {
+                        document.getElementById('adminControlCard').style.display = 'block';
+                        document.getElementById('resetBtn').style.display = 'block';
+                    }
+                    registerDeviceWithServer(data.email);
+                } else {
+                    document.getElementById('authOverlay').style.display = 'flex';
+                }
             });
         }
-    });
-}
 
-function adminAction(devId, action) {
-    socket.emit('admin_device_action', {device_id: devId, action: action});
-}
+        function loginUser() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            const remember = document.getElementById('rememberMeToggle').checked;
+            const devId = getDeviceId();
 
-fetch('/get_history')
-.then(res => res.json())
-.then(data => {
-    const stream = document.getElementById('historyStream');
-    if (stream) {
-        stream.innerHTML = '';
-        data.reverse().forEach(item => appendMessageToStream(item));
-    }
-});
-
-socket.on('broadcast_message', data => {
-    appendMessageToStream(data);
-});
-
-socket.on('message_deleted', data => {
-    const el = document.getElementById('msg-box-' + data.id);
-    if (el) el.remove();
-});
-
-function appendMessageToStream(item) {
-    const stream = document.getElementById('historyStream');
-    if (!stream) return;
-    const div = document.createElement('div');
-    div.className = 'history-item';
-    div.id = 'msg-box-' + item.id;
-    let contentHtml = '';
-    if (item.type === 'text') {
-        contentHtml = `<div><b>${item.user}:</b> ${item.content}</div>`;
-    } else if (item.type === 'voice') {
-        contentHtml = `<div><b>${item.user} [Voice - ${item.store}]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
-    } else if (item.type === 'file') {
-        if (item.filename && (item.filename.endsWith('.jpg') || item.filename.endsWith('.png') || item.filename.endsWith('.jpeg'))) {
-            contentHtml = `<div><b>${item.user} [Image]:</b><br><img src="${item.content}" class="chat-image-preview"></div>`;
-        } else {
-            contentHtml = `<div><b>${item.user} [File]:</b> <a href="${item.content}" download="${item.filename}" style="color:#f472b6;">${item.filename}</a></div>`;
-        }
-    } else if (item.type === 'videocall_alert') {
-        contentHtml = `<div><b>🚨 Anime Video Call Alert:</b> ${item.user} has triggered a video conference!</div>`;
-    }
-
-    let actionButtons = '';
-    if (item.type === 'text') {
-        actionButtons = `<div class="msg-actions">
-            <button onclick="copyTextContent('${encodeURIComponent(item.content)}')">Copy</button>
-            <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button>
-        </div>`;
-    } else if (item.type === 'voice' || item.type === 'file') {
-        actionButtons = `<div class="msg-actions">
-            <button onclick="saveToDevice('${item.content}', '${item.filename || 'media_file'}')">Save to Device</button>
-            <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button>
-        </div>`;
-    }
-
-    div.innerHTML = contentHtml + actionButtons + `<div style="font-size:10px; color:#94a3b8; margin-top:4px;">${item.timestamp}</div>`;
-    stream.appendChild(div);
-    stream.scrollTop = stream.scrollHeight;
-}
-
-function copyTextContent(encodedText) {
-    const text = decodeURIComponent(encodedText);
-    navigator.clipboard.writeText(text).then(() => alert("Copied to clipboard!"));
-}
-
-function saveToDevice(dataUrl, filename) {
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-}
-
-function deleteMessageItem(id) {
-    socket.emit('delete_message_item', {id: id});
-}
-
-function toggleRecordVoice() {
-    const btn = document.getElementById('recBtn');
-    const options = document.getElementById('voiceOptions');
-    if (btn.innerText.includes("Record")) {
-        audioChunks = [];
-        navigator.mediaDevices.getUserMedia({audio: true}).then(stream => {
-            mediaRecorder = new MediaRecorder(stream);
-            mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-            mediaRecorder.onstop = () => {
-                const audioBlob = new Blob(audioChunks, {type: 'audio/mp3'});
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                    window.tempVoiceData = reader.result;
-                    options.style.display = 'block';
-                };
-                reader.readAsDataURL(audioBlob);
-            };
-            mediaRecorder.start();
-            btn.innerText = "Stop Recording (Saving...)";
-            setTimeout(() => {
-                if (mediaRecorder && mediaRecorder.state === 'recording') {
-                    mediaRecorder.stop();
-                    btn.innerText = "Record Voice (3s)";
+            fetch('/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email, password, remember, device_id: devId})
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    if (remember && data.remember_token) {
+                        localStorage.setItem('wma_remember_email', email);
+                        localStorage.setItem('wma_remember_token', data.remember_token);
+                    }
+                    location.reload();
+                } else {
+                    document.getElementById('loginError').innerText = data.error;
                 }
-            }, 3000);
+            });
+        }
+
+        function signupUser() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            const devId = getDeviceId();
+
+            fetch('/signup', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email, password, device_id: devId})
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    document.getElementById('loginError').innerText = data.error;
+                }
+            });
+        }
+
+        function openForgetPassword() {
+            const email = prompt("Google Account (Email) ထည့်ပါ:");
+            if (!email) return;
+            const newPassword = prompt("Password အသစ်အသစ် ထည့်ပါ:");
+            if (!newPassword) return;
+
+            fetch('/reset_password_google', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email: email.trim().toLowerCase(), new_password: newPassword})
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    alert("Password အောင်မြင်စွာ ပြောင်းလဲပြီးပါပြီ။ Login ထပ်ဝင်ပါ။");
+                } else {
+                    alert("Error: " + data.error);
+                }
+            });
+        }
+
+        function logoutUser() {
+            localStorage.removeItem('wma_remember_email');
+            localStorage.removeItem('wma_remember_token');
+            fetch('/logout', {method: 'POST'}).then(() => location.reload());
+        }
+
+        function registerDeviceWithServer(email) {
+            const devId = getDeviceId();
+            socket.emit('register_device', {device_id: devId, google_account: email});
+            fetchDevices();
+        }
+
+        socket.on('device_status_update', () => {
+            fetchDevices();
         });
-    }
-}
 
-function sendVoice(storeType) {
-    if (window.tempVoiceData) {
-        socket.emit('new_message', {
-            user: document.getElementById('currentLoggedInEmail').innerText,
-            type: 'voice',
-            content: window.tempVoiceData,
-            store: storeType
+        function fetchDevices() {
+            fetch('/get_devices')
+            .then(res => res.json())
+            .then(devices => {
+                const devId = getDeviceId();
+                let currentDev = devices.find(d => d.device_id === devId);
+                if (currentDev) {
+                    if (currentDev.status === 'pending' && currentDev.account !== 'officialwinmyat@gmail.com') {
+                        document.getElementById('pendingOverlay').style.display = 'flex';
+                        document.getElementById('overlayDeviceId').value = devId;
+                        document.getElementById('overlayStatus').innerText = "Status: Pending Approval ⏳";
+                    } else if (currentDev.status === 'banned') {
+                        document.getElementById('pendingOverlay').style.display = 'flex';
+                        document.getElementById('overlayDeviceId').value = devId;
+                        document.getElementById('overlayStatus').innerText = "Status: Banned ❌";
+                    } else {
+                        document.getElementById('pendingOverlay').style.display = 'none';
+                    }
+                }
+                const listContainer = document.getElementById('activeDeviceList');
+                if (listContainer) {
+                    listContainer.innerHTML = '';
+                    devices.forEach(d => {
+                        let row = document.createElement('div');
+                        row.className = 'device-row';
+                        row.innerHTML = `<span><b>${d.device_id}</b> (${d.account}) [${d.status}]</span> 
+                        <div>
+                            <button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 6px; font-size:10px; background:#16a34a; width:auto;">Approve</button>
+                            <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 6px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
+                            <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 6px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
+                        </div>`;
+                        listContainer.appendChild(row);
+                    });
+                }
+            });
+        }
+
+        function adminAction(devId, action) {
+            socket.emit('admin_device_action', {device_id: devId, action: action});
+        }
+
+        // Load History on Start
+        fetch('/get_history')
+        .then(res => res.json())
+        .then(data => {
+            const stream = document.getElementById('historyStream');
+            stream.innerHTML = '';
+            data.reverse().forEach(item => appendMessageToStream(item));
         });
-        document.getElementById('voiceOptions').style.display = 'none';
-        window.tempVoiceData = null;
-    }
-}
 
-function solveEquation(textarea) {
-    let val = textarea.value.trim();
-    if (val.endsWith('=')) {
-        try {
-            let expr = val.slice(0, -1);
-            let result = eval(expr);
-            textarea.value = val + ' ' + result;
-        } catch(e) {}
-    }
-}
+        socket.on('broadcast_message', data => {
+            appendMessageToStream(data);
+        });
 
-function sendText() {
-    const content = document.getElementById('textContent').value;
-    if (!content) return;
-    socket.emit('new_message', {
-        user: document.getElementById('currentLoggedInEmail').innerText,
-        type: 'text',
-        content: content,
-        store: '48h'
-    });
-    document.getElementById('textContent').value = '';
-}
+        socket.on('message_deleted', data => {
+            const el = document.getElementById('msg-box-' + data.id);
+            if (el) el.remove();
+        });
 
-function handleFileSelected(input) {
-    if (input.files && input.files[0]) {
-        const file = input.files[0];
-        selectedFileName = file.name;
-        selectedFileType = file.type;
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            selectedFileBase64 = e.target.result;
-            document.getElementById('sendFileBtn').disabled = false;
-            document.getElementById('sendFileBtn').style.opacity = '1';
-        };
-        reader.readAsDataURL(file);
-    }
-}
+        function appendMessageToStream(item) {
+            const stream = document.getElementById('historyStream');
+            const div = document.createElement('div');
+            div.className = 'history-item';
+            div.id = 'msg-box-' + item.id;
+            let contentHtml = '';
+            if (item.type === 'text') {
+                contentHtml = `<div><b>${item.user}:</b> ${item.content}</div>`;
+            } else if (item.type === 'voice') {
+                contentHtml = `<div><b>${item.user} [Voice - ${item.store}]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
+            } else if (item.type === 'file') {
+                if (item.filename && (item.filename.endsWith('.jpg') || item.filename.endsWith('.png') || item.filename.endsWith('.jpeg'))) {
+                    contentHtml = `<div><b>${item.user} [Image]:</b><br><img src="${item.content}" class="chat-image-preview"></div>`;
+                } else {
+                    contentHtml = `<div><b>${item.user} [File]:</b> <a href="${item.content}" download="${item.filename}" style="color:#f472b6;">${item.filename}</a></div>`;
+                }
+            } else if (item.type === 'videocall_alert') {
+                contentHtml = `<div><b>🚨 Anime Video Call Alert:</b> ${item.user} has triggered a video conference!</div>`;
+            }
+            
+            let actionButtons = '';
+            if (item.type === 'text') {
+                actionButtons = `<div class="msg-actions"> <button onclick="copyTextContent('${encodeURIComponent(item.content)}')">Copy</button> <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button> </div>`;
+            } else if (item.type === 'voice' || item.type === 'file') {
+                actionButtons = `<div class="msg-actions"> <button onclick="saveToDevice('${item.content}', '${item.filename || 'media_file'}')">Save to Device</button> <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button> </div>`;
+            }
+            div.innerHTML = contentHtml + actionButtons + `<div style="font-size:10px; color:#94a3b8; margin-top:4px;">${item.timestamp}</div>`;
+            stream.appendChild(div);
+            stream.scrollTop = stream.scrollHeight;
+        }
 
-function sendFile() {
-    if (!selectedFileBase64) return;
-    socket.emit('new_message', {
-        user: document.getElementById('currentLoggedInEmail').innerText,
-        type: 'file',
-        content: selectedFileBase64,
-        filename: selectedFileName,
-        store: '48h'
-    });
-    document.getElementById('fileInput').value = '';
-    selectedFileBase64 = null;
-    document.getElementById('sendFileBtn').disabled = true;
-    document.getElementById('sendFileBtn').style.opacity = '0.5';
-}
+        function copyTextContent(encodedText) {
+            const text = decodeURIComponent(encodedText);
+            navigator.clipboard.writeText(text).then(() => alert("Copied to clipboard!"));
+        }
 
-function triggerVideoCall() {
-    socket.emit('trigger_video_call', {user: document.getElementById('currentLoggedInEmail').innerText});
-    socket.emit('new_message', {
-        user: document.getElementById('currentLoggedInEmail').innerText,
-        type: 'videocall_alert',
-        content: 'Triggered conference',
-        store: '5m'
-    });
-    startConferenceUI(true);
-}
+        function saveToDevice(dataUrl, filename) {
+            const a = document.createElement('a');
+            a.href = dataUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
 
-socket.on('incoming_video_call', data => {
-    if (confirm(`Incoming Anime Video Call from ${data.user}. Accept?`)) {
-        startConferenceUI(false);
-    }
-});
+        function deleteMessageItem(id) {
+            socket.emit('delete_message_item', {id: id});
+        }
 
-function startConferenceUI(isInitiator) {
-    document.getElementById('videoPopup').style.display = 'block';
-    navigator.mediaDevices.getUserMedia({video: true, audio: true})
-    .then(stream => {
-        localStream = stream;
-        document.getElementById('localVideo').srcObject = stream;
-    }).catch(err => alert("Camera permission error: " + err));
-}
+        // Voice Recording
+        function toggleRecordVoice() {
+            const btn = document.getElementById('recBtn');
+            const options = document.getElementById('voiceOptions');
+            if (btn.innerText.includes("Record")) {
+                audioChunks = [];
+                navigator.mediaDevices.getUserMedia({audio: true}).then(stream => {
+                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                    mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(audioChunks, {type: 'audio/mp3'});
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            window.tempVoiceData = reader.result;
+                            options.style.display = 'block';
+                        };
+                        reader.readAsDataURL(audioBlob);
+                    };
+                    mediaRecorder.start();
+                    btn.innerText = "Stop Recording (Saving...)";
+                    setTimeout(() => {
+                        if (mediaRecorder && mediaRecorder.state === 'recording') {
+                            mediaRecorder.stop();
+                            btn.innerText = "Record Voice (3s)";
+                        }
+                    }, 3000);
+                });
+            }
+        }
 
-function stopConference() {
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-    }
-    closePopup();
-}
+        function sendVoice(storeType) {
+            if (window.tempVoiceData) {
+                socket.emit('new_message', {
+                    user: document.getElementById('currentLoggedInEmail').innerText,
+                    type: 'voice',
+                    content: window.tempVoiceData,
+                    store: storeType
+                });
+                document.getElementById('voiceOptions').style.display = 'none';
+                window.tempVoiceData = null;
+            }
+        }
 
-function closePopup() {
-    document.getElementById('videoPopup').style.display = 'none';
-}
+        // Text & Equation
+        function solveEquation(textarea) {
+            let val = textarea.value.trim();
+            if (val.endsWith('=')) {
+                try {
+                    let expr = val.slice(0, -1);
+                    let result = eval(expr);
+                    textarea.value = val + ' ' + result;
+                } catch(e) {}
+            }
+        }
 
-function resetStorage() {
-    if (confirm("Are you sure you want to reset all storage?")) {
-        socket.emit('reset_storage');
-    }
-}
+        function sendText() {
+            const content = document.getElementById('textContent').value;
+            if (!content) return;
+            socket.emit('new_message', {
+                user: document.getElementById('currentLoggedInEmail').innerText,
+                type: 'text',
+                content: content,
+                store: '48h'
+            });
+            document.getElementById('textContent').value = '';
+        }
 
-socket.on('storage_reset', () => {
-    document.getElementById('historyStream').innerHTML = '';
-    alert("Storage has been reset.");
-});
-</script>
+        // File Handling
+        function handleFileSelected(input) {
+            if (input.files && input.files[0]) {
+                const file = input.files[0];
+                selectedFileName = file.name;
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    selectedFileBase64 = e.target.result;
+                    document.getElementById('sendFileBtn').disabled = false;
+                    document.getElementById('sendFileBtn').style.opacity = '1';
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function sendFile() {
+            if (!selectedFileBase64) return;
+            socket.emit('new_message', {
+                user: document.getElementById('currentLoggedInEmail').innerText,
+                type: 'file',
+                content: selectedFileBase64,
+                filename: selectedFileName,
+                store: '48h'
+            });
+            document.getElementById('fileInput').value = '';
+            selectedFileBase64 = null;
+            document.getElementById('sendFileBtn').disabled = true;
+            document.getElementById('sendFileBtn').style.opacity = '0.5';
+        }
+
+        // Video Call & Conference handling
+        function triggerVideoCall() {
+            socket.emit('trigger_video_call', {user: document.getElementById('currentLoggedInEmail').innerText});
+            socket.emit('new_message', {
+                user: document.getElementById('currentLoggedInEmail').innerText,
+                type: 'videocall_alert',
+                content: 'Triggered conference',
+                store: '5m'
+            });
+            startConferenceUI();
+        }
+
+        socket.on('incoming_video_call', data => {
+            if (confirm(`Incoming Anime Video Call from ${data.user}. Accept?`)) {
+                startConferenceUI();
+            }
+        });
+
+        function startConferenceUI() {
+            document.getElementById('videoPopup').style.display = 'block';
+            navigator.mediaDevices.getUserMedia({video: true, audio: true})
+            .then(stream => {
+                localStream = stream;
+                document.getElementById('localVideo').srcObject = stream;
+            }).catch(err => alert("Camera permission error: " + err));
+        }
+
+        function stopConference() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+            closePopup();
+        }
+
+        function closePopup() {
+            document.getElementById('videoPopup').style.display = 'none';
+        }
+
+        function resetStorage() {
+            if (confirm("Are you sure you want to reset all storage (Live Chat and history)?")) {
+                socket.emit('reset_storage');
+            }
+        }
+
+        socket.on('storage_reset', () => {
+            document.getElementById('historyStream').innerHTML = '';
+            alert("Storage has been reset.");
+        });
+    </script>
 </body>
 </html>
-"""
-
-if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000)
