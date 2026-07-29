@@ -237,7 +237,6 @@ def get_history():
     clean_expired_history()
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
-    # Returns messages that are not expired, ordered by id descending
     cursor.execute('SELECT id, user_info, msg_type, content, filename, store_type, timestamp FROM history ORDER BY id DESC')
     rows = cursor.fetchall()
     conn.close()
@@ -267,7 +266,6 @@ def handle_register_device(data):
     cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
     row = cursor.fetchone()
     
-    # If already approved previously, retain approved status unless explicitly removed or banned by admin
     status = 'approved' if google_acc == 'officialwinmyat@gmail.com' else ('approved' if row and row[0] == 'approved' else 'pending')
     
     if not row:
@@ -312,7 +310,6 @@ def handle_new_message(data):
     store = data.get('store', '48 Hours Auto-Delete')
     
     now = datetime.now()
-    # 48 hours expiration for individual messages/files/images
     expire_at = now + timedelta(hours=48)
         
     conn = sqlite3.connect('wma_qq.db')
@@ -372,11 +369,11 @@ HTML_PAGE = """
     <style>
         :root {
             --bg-color: #0f172a;
-            --panel-bg: rgba(20, 24, 33, 0.85);
+            --panel-bg: rgba(20, 24, 33, 0.88);
             --text-color: #f8fafc;
             --accent-color: #ec4899;
-            --chat-bg: rgba(10, 14, 23, 0.8);
-            --stream-bg: rgba(20, 24, 33, 0.8);
+            --chat-bg: rgba(10, 14, 23, 0.85);
+            --stream-bg: rgba(20, 24, 33, 0.85);
             --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80');
         }
         body {
@@ -392,48 +389,56 @@ HTML_PAGE = """
             width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box;
             background: var(--panel-bg); border-right: 3px solid var(--accent-color);
             position: relative; backdrop-filter: blur(12px);
+            transition: all 0.3s ease;
         }
         .right-pane {
             width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box;
             background: var(--stream-bg); position: relative; backdrop-filter: blur(12px);
             border-left: 3px solid var(--accent-color);
+            transition: all 0.3s ease;
         }
         .card {
-            background: rgba(255,255,255,0.06); padding: 15px; border-radius: 8px; margin-bottom: 15px;
+            background: rgba(255,255,255,0.08); padding: 15px; border-radius: 10px; margin-bottom: 15px;
             border: 2px solid var(--accent-color); backdrop-filter: blur(8px);
-            box-shadow: 0 0 12px rgba(236,72,153,0.25);
+            box-shadow: 0 0 15px color-mix(in srgb, var(--accent-color) 35%, transparent);
+            transition: all 0.3s ease;
         }
         input, textarea, select, button {
-            width: 100%; padding: 10px; margin: 8px 0; border-radius: 5px;
-            border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.9);
-            color: white; box-sizing: border-box;
+            width: 100%; padding: 10px; margin: 8px 0; border-radius: 6px;
+            border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.92);
+            color: white; box-sizing: border-box; outline: none; transition: all 0.3s ease;
+        }
+        input:focus, textarea:focus, select:focus {
+            box-shadow: 0 0 10px var(--accent-color);
         }
         button {
             background: var(--accent-color); cursor: pointer; font-weight: bold; border: 2px solid #fff; transition: 0.2s;
         }
-        button:hover { opacity: 0.85; transform: scale(1.01); }
+        button:hover { opacity: 0.9; transform: scale(1.02); box-shadow: 0 0 12px var(--accent-color); }
         #historyStream {
             flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color);
-            border-radius: 8px; padding: 10px; box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 40px;
+            border-radius: 10px; padding: 12px; box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 40px;
+            box-shadow: inset 0 0 15px color-mix(in srgb, var(--accent-color) 20%, transparent);
         }
         .history-item {
-            padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.07);
-            border-left: 6px solid var(--accent-color); border-radius: 6px; font-size: 13px; word-break: break-all; position: relative;
+            padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.08);
+            border-left: 6px solid var(--accent-color); border-radius: 8px; font-size: 13px; word-break: break-all; position: relative;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3); transition: all 0.3s ease;
         }
-        .msg-actions { margin-top: 8px; display: flex; gap: 6px; }
-        .msg-actions button { padding: 4px 10px; font-size: 11px; width: auto; margin: 0; border-radius: 4px; }
+        .msg-actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+        .msg-actions button { padding: 4px 10px; font-size: 11px; width: auto; margin: 0; border-radius: 4px; background: var(--accent-color); border: 1px solid #fff; }
         #resetBtn {
             position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white;
-            padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none;
+            padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none;
         }
         #videoPopup {
             display: none; position: fixed; top: 10%; left: 15%; width: 70%;
-            background: rgba(20, 24, 33, 0.98); border: 3px solid var(--accent-color); border-radius: 10px;
-            padding: 20px; z-index: 1000; box-shadow: 0 0 35px rgba(236,72,153,0.5); text-align: center; backdrop-filter: blur(18px);
+            background: rgba(20, 24, 33, 0.98); border: 3px solid var(--accent-color); border-radius: 12px;
+            padding: 20px; z-index: 1000; box-shadow: 0 0 35px var(--accent-color); text-align: center; backdrop-filter: blur(18px);
         }
         .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; max-height: 380px; overflow-y: auto; margin: 15px 0; }
-        .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 6px; padding: 5px; }
-        video { width: 100%; height: 160px; object-fit: cover; border-radius: 4px; background: #000; }
+        .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 8px; padding: 5px; }
+        video { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; background: #000; }
         .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
         #appContainer { display: none; width: 100%; height: 100vh; }
         #authOverlay, #pendingOverlay {
@@ -442,15 +447,23 @@ HTML_PAGE = """
             justify-content: center; align-items: center; text-align: center; padding: 20px;
         }
         #pendingOverlay { display: none; }
-        .chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 1px solid var(--accent-color); display: block; }
+        .chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 2px solid var(--accent-color); display: block; }
+
+        /* Responsive Mobile Layout Fix */
+        @media (max-width: 768px) {
+            body { flex-direction: column; height: auto; overflow-y: auto; }
+            .left-pane, .right-pane { width: 100%; height: auto; min-height: 50vh; border: none; border-bottom: 3px solid var(--accent-color); }
+            #videoPopup { width: 90%; left: 5%; top: 5%; }
+            #historyStream { margin-top: 20px; min-height: 350px; }
+        }
     </style>
 </head>
 <body>
     <!-- Login / Sign Up Screen -->
     <div id="authOverlay">
-        <h2 style="color: #f472b6;">WMA QQ - Chinese & Japanese Anime Hub</h2>
+        <h2 style="color: var(--accent-color); text-shadow: 0 0 10px var(--accent-color);">WMA QQ - Chinese & Japanese Anime Hub</h2>
         <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password ဖြင့် ဝင်ရောက်ပါ (သို့မဟုတ် အကောင့်အသစ်ဖွင့်ပါ)</p>
-        <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 8px; border: 2px solid var(--accent-color); width: 320px;">
+        <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px; box-shadow: 0 0 20px var(--accent-color);">
             <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
             <input type="password" id="loginPassword" placeholder="Password">
             <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0;">
@@ -468,9 +481,9 @@ HTML_PAGE = """
 
     <!-- Pending / Ban Access Block Screen -->
     <div id="pendingOverlay">
-        <h2 id="overlayTitle" style="color: #f472b6;">WMA QQ - Device Verification Required</h2>
+        <h2 id="overlayTitle" style="color: var(--accent-color);">WMA QQ - Device Verification Required</h2>
         <p id="overlayDesc" style="max-width: 500px; color: #cbd5e1; margin: 15px 0;">သင့် Device သည် Admin (officialwinmyat@gmail.com) ထံမှ Approve အတည်ပြုချက် ရယူရန် လိုအပ်နေပါသည်။</p>
-        <div style="background: rgba(255,255,255,0.08); padding: 15px; border-radius: 8px; border: 2px solid var(--accent-color); margin-bottom: 15px; width: 320px;">
+        <div style="background: rgba(255,255,255,0.08); padding: 15px; border-radius: 10px; border: 2px solid var(--accent-color); margin-bottom: 15px; width: 320px;">
             <input type="text" id="overlayDeviceId" readonly style="text-align:center; font-weight:bold;">
             <div id="overlayStatus" style="font-size: 14px; color: #facc15; font-weight: bold; margin-top: 10px;">Status: Pending Approval ⏳</div>
         </div>
@@ -482,7 +495,7 @@ HTML_PAGE = """
         <!-- Video Conference Popup -->
         <div id="videoPopup">
             <h3>WMA QQ - Anime Video Conference</h3>
-            <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: #f472b6;"></div>
+            <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: var(--accent-color);"></div>
             <div class="video-grid" id="videoGridContainer">
                 <div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>
             </div>
@@ -495,10 +508,10 @@ HTML_PAGE = """
         </div>
 
         <div class="left-pane">
-            <h2>WMA QQ Anime Control Panel</h2>
-            <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:#f472b6;"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
+            <h2 style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color);">WMA QQ Anime Control Panel</h2>
+            <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:var(--accent-color);"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
             <div class="card">
-                <h4>Dynamic Chinese & Japanese Anime Themes</h4>
+                <h4 style="color: var(--accent-color);">Dynamic Chinese & Japanese Anime Themes</h4>
                 <button onclick="autoGenerateAnimeTheme()">Randomize Anime Character Theme</button>
             </div>
 
@@ -512,7 +525,7 @@ HTML_PAGE = """
 
             <!-- Function 1: Voice Message -->
             <div class="card">
-                <h4>Function 1: Voice Message (Max 3s)</h4>
+                <h4 style="color: var(--accent-color);">Function 1: Voice Message (Max 3s)</h4>
                 <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
                 <div id="voiceOptions" style="display:none; margin-top: 10px;">
                     <button onclick="sendVoice('48 Hours')" style="background: var(--accent-color);">Send Voice (48h Auto-Delete)</button>
@@ -521,20 +534,20 @@ HTML_PAGE = """
 
             <!-- Function 2: Video Call -->
             <div class="card">
-                <h4>Function 2: Video Call</h4>
+                <h4 style="color: var(--accent-color);">Function 2: Video Call</h4>
                 <button onclick="triggerVideoCall()" style="background: #16a34a;">Call All Active Users</button>
             </div>
 
             <!-- Function 3: Text & Universal Equation -->
             <div class="card">
-                <h4>Function 3: Text & Universal Equation</h4>
+                <h4 style="color: var(--accent-color);">Function 3: Text & Universal Equation</h4>
                 <textarea id="textContent" rows="3" placeholder="Write text or equation (e.g. 50 * 20 =)" oninput="solveEquation(this)"></textarea>
                 <button onclick="sendText()">Send Text (48h Auto-Delete)</button>
             </div>
 
             <!-- Function 4: File or Image -->
             <div class="card">
-                <h4>Function 4: Original File or Image (48h Auto-Delete)</h4>
+                <h4 style="color: var(--accent-color);">Function 4: Original File or Image (48h Auto-Delete)</h4>
                 <input type="file" id="fileInput" onchange="handleFileSelected(this)">
                 <button id="sendFileBtn" onclick="sendFile()" disabled style="opacity: 0.5;">Send File / Image</button>
             </div>
@@ -542,7 +555,7 @@ HTML_PAGE = """
 
         <div class="right-pane" id="rightPane">
             <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
-            <h3>WMA QQ - Live Chat & History Stream</h3>
+            <h3 style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color);">WMA QQ - Live Chat & History Stream</h3>
             <div id="historyStream"></div>
         </div>
     </div>
@@ -552,11 +565,37 @@ HTML_PAGE = """
         let mediaRecorder;
         let audioChunks = [];
         let localStream = null;
-        let peerConnections = {}; // socketId -> RTCPeerConnection
+        let peerConnections = {};
         let selectedFileBase64 = null;
         let selectedFileName = '';
         let isSpeakerMuted = false;
         let isCameraMuted = false;
+        let wakeLock = null;
+
+        // Screen Wake Lock to keep screen awake / prevent screen off
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    wakeLock.addEventListener('release', () => {
+                        wakeLock = null;
+                    });
+                }
+            } catch (err) {
+                console.error(`${err.name}, ${err.message}`);
+            }
+        }
+        document.addEventListener('visibilitychange', async () => {
+            if (wakeLock !== null && document.visibilityState === 'visible') {
+                await requestWakeLock();
+            }
+        });
+        requestWakeLock();
+
+        // Browser Notification permission request
+        if ('Notification' in window && Notification.permission !== 'granted') {
+            Notification.requestPermission();
+        }
 
         const servers = {
             iceServers: [
@@ -569,15 +608,31 @@ HTML_PAGE = """
             { name: "Naruto Uzumaki", bg: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#f97316" },
             { name: "Gojo Satoru", bg: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", accent: "#3b82f6" },
             { name: "Wei Wuxian (MDZS)", bg: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", accent: "#a855f7" },
-            { name: "Nezuko Kamado", bg: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" }
+            { name: "Nezuko Kamado", bg: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" },
+            { name: "Tanjiro Kamado", bg: "https://images.unsplash.com/photo-1563089145-599997674d42?auto=format&fit=crop&w=1920&q=80", accent: "#22c55e" },
+            { name: "Lelouch Lamperouge", bg: "https://images.unsplash.com/photo-1614850523459-c2f4c699c52e?auto=format&fit=crop&w=1920&q=80", accent: "#eab308" }
         ];
 
         function autoGenerateAnimeTheme() {
             const theme = animeThemes[Math.floor(Math.random() * animeThemes.length)];
             document.documentElement.style.setProperty('--accent-color', theme.accent);
             document.documentElement.style.setProperty('--bg-image', `url('${theme.bg}')`);
-            alert("Theme switched to anime style: " + theme.name);
+            
+            // Save selected theme to localStorage for continuity
+            localStorage.setItem('wma_current_theme', JSON.stringify(theme));
         }
+
+        // Load saved theme on startup
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedTheme = localStorage.getItem('wma_current_theme');
+            if (savedTheme) {
+                try {
+                    const theme = JSON.parse(savedTheme);
+                    document.documentElement.style.setProperty('--accent-color', theme.accent);
+                    document.documentElement.style.setProperty('--bg-image', `url('${theme.bg}')`);
+                } catch(e) {}
+            }
+        });
 
         function togglePasswordVisibility() {
             const pwd = document.getElementById('loginPassword');
@@ -772,11 +827,11 @@ HTML_PAGE = """
         .then(data => {
             const stream = document.getElementById('historyStream');
             stream.innerHTML = '';
-            data.reverse().forEach(item => appendMessageToStream(item));
+            data.reverse().forEach(item => appendMessageToStream(item, false));
         });
 
         socket.on('broadcast_message', data => {
-            appendMessageToStream(data);
+            appendMessageToStream(data, true);
         });
 
         socket.on('message_deleted', data => {
@@ -784,7 +839,7 @@ HTML_PAGE = """
             if (el) el.remove();
         });
 
-        function appendMessageToStream(item) {
+        function appendMessageToStream(item, triggerNotification = false) {
             const stream = document.getElementById('historyStream');
             const div = document.createElement('div');
             div.className = 'history-item';
@@ -798,7 +853,7 @@ HTML_PAGE = """
                 if (item.filename && (item.filename.endsWith('.jpg') || item.filename.endsWith('.png') || item.filename.endsWith('.jpeg'))) {
                     contentHtml = `<div><b>${item.user} [Image]:</b><br><img src="${item.content}" class="chat-image-preview"></div>`;
                 } else {
-                    contentHtml = `<div><b>${item.user} [File]:</b> <a href="${item.content}" download="${item.filename}" style="color:#f472b6;">${item.filename}</a></div>`;
+                    contentHtml = `<div><b>${item.user} [File]:</b> <a href="${item.content}" download="${item.filename}" style="color:var(--accent-color);">${item.filename}</a></div>`;
                 }
             } else if (item.type === 'videocall_alert') {
                 contentHtml = `<div><b>🚨 Anime Video Call Alert:</b> ${item.user} has started a video call!
@@ -820,6 +875,14 @@ HTML_PAGE = """
             div.innerHTML = contentHtml + (item.type !== 'videocall_alert' ? actionButtons : '') + `<div style="font-size:10px; color:#94a3b8; margin-top:4px;">${item.timestamp}</div>`;
             stream.appendChild(div);
             stream.scrollTop = stream.scrollHeight;
+
+            // Trigger Browser Notification for new incoming history/messages
+            if (triggerNotification && 'Notification' in window && Notification.permission === 'granted') {
+                new Notification(`WMA QQ - New Message from ${item.user}`, {
+                    body: item.type === 'text' ? item.content : `New ${item.type} received!`,
+                    icon: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=120&q=80'
+                });
+            }
         }
 
         function copyTextContent(encodedText) {
@@ -947,13 +1010,10 @@ HTML_PAGE = """
             startConferenceUI(currentUser);
         }
 
-        socket.on('incoming_video_call', data => {
-            // Notification handled directly in LiveChat stream items with Accept/Delete buttons.
-        });
+        socket.on('incoming_video_call', data => {});
 
         function acceptVideoCall(callerUser) {
             startConferenceUI(callerUser);
-            // Broadcast join signal to establish peer connections with existing participants
             socket.emit('video_signal', {type: 'join_call', user: document.getElementById('currentLoggedInEmail').innerText});
         }
 
@@ -965,8 +1025,6 @@ HTML_PAGE = """
             .then(stream => {
                 localStream = stream;
                 document.getElementById('localVideo').srcObject = stream;
-
-                // Notify others in room/socket server to connect
                 socket.emit('video_signal', {type: 'ready_peer', sender: socket.id});
             }).catch(err => alert("Camera permission error: " + err));
         }
@@ -1071,7 +1129,6 @@ HTML_PAGE = """
             }
             peerConnections = {};
             
-            // Remove all remote video boxes
             let gridContainer = document.getElementById('videoGridContainer');
             gridContainer.innerHTML = '<div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>';
             
