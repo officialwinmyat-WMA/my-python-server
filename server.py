@@ -960,6 +960,7 @@ HTML_PAGE = """
             document.getElementById('historyStream').innerHTML = '';
             alert("Storage has been reset.");
         });
-    </script>
+   </script>
 </body>
 </html>
+"""
