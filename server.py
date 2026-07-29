@@ -81,7 +81,7 @@ def index():
 
 @app.route('/signup', methods=['POST'])
 def signup():
-    data = request.json
+    data = request.json or {}
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
     if not email or not password:
@@ -102,7 +102,7 @@ def signup():
 
 @app.route('/login', methods=['POST'])
 def login():
-    data = request.json
+    data = request.json or {}
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
     conn = sqlite3.connect('wma_qq.db')
@@ -119,7 +119,7 @@ def login():
 
 @app.route('/forgot_password', methods=['POST'])
 def forgot_password():
-    data = request.json
+    data = request.json or {}
     email = data.get('email', '').strip().lower()
     if not email:
         return jsonify({"success": False, "error": "ကျေးဇူးပြု၍ Email ထည့်ပါ။"})
@@ -131,8 +131,7 @@ def forgot_password():
     conn.close()
     
     if row:
-        # Google account verification simulation & password reset dispatch
-        return jsonify({"success": True, "message": "Google Account ချိတ်ဆက်မှု အောင်မြင်ပါသည်။ Password အသစ်ကို သင့် Email သို့ ပို့ပေးလိုက်ပါပြီ။", "password": row[0]})
+        return jsonify({"success": True, "message": "Google Account ချိတ်ဆက်မှု အောင်မြင်ပါသည်။ Password ကို အောက်တွင် ဖော်ပြပေးလိုက်ပါသည် -", "password": row[0]})
     else:
         return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်မရှိပါ။"})
 
@@ -227,7 +226,6 @@ def handle_admin_action(data):
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
     if action == 'remove':
-        # Get associated google account/email to remove user credentials from database if needed or just remove device
         cursor.execute('SELECT google_account FROM devices WHERE device_id = ?', (dev_id,))
         dev_row = cursor.fetchone()
         if dev_row and dev_row[0]:
@@ -399,16 +397,18 @@ video { width: 100%; height: 160px; object-fit: cover; border-radius: 4px; backg
     <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 8px; border: 2px solid var(--accent-color); width: 320px;">
         <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
         <input type="password" id="loginPassword" placeholder="Password">
-        <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0;">
-            <input type="checkbox" id="showPasswordToggle" onclick="togglePasswordVisibility()" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Password ပြရန်
+        <div style="display: flex; align-items: center; font-size: 12px; color: #cbd5e1; margin: 5px 0; text-align: left;">
+            <input type="checkbox" id="showPasswordToggle" style="width: 16px; height: 16px; margin-right: 8px; accent-color: var(--accent-color); cursor: pointer;">
+            <label for="showPasswordToggle" style="cursor: pointer;">Password ပြရန်</label>
         </div>
-        <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0 10px 0;">
-            <input type="checkbox" id="rememberMeToggle" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Save Password (Remember Me)
+        <div style="display: flex; align-items: center; font-size: 12px; color: #cbd5e1; margin: 5px 0 10px 0; text-align: left;">
+            <input type="checkbox" id="rememberMeToggle" style="width: 16px; height: 16px; margin-right: 8px; accent-color: var(--accent-color); cursor: pointer;">
+            <label for="rememberMeToggle" style="cursor: pointer;">Save Password (Remember Me)</label>
         </div>
-        <button onclick="loginUser()" style="background: var(--accent-color); margin-top: 5px;">Login</button>
-        <button onclick="signupUser()" style="background: #3b82f6; margin-top: 5px;">Sign Up (အကောင့်သစ်ဖွင့်ရန်)</button>
+        <button id="loginBtn" type="button" style="background: var(--accent-color); margin-top: 5px;">Login</button>
+        <button id="signupBtn" type="button" style="background: #3b82f6; margin-top: 5px;">Sign Up (အကောင့်သစ်ဖွင့်ရန်)</button>
         <div style="margin-top: 8px; text-align: right;">
-            <a href="#" onclick="forgotPassword(event)" style="color: #f472b6; font-size: 12px; text-decoration: underline;">Forget Password?</a>
+            <a href="#" id="forgotPasswordLink" style="color: #f472b6; font-size: 12px; text-decoration: underline;">Forget Password?</a>
         </div>
         <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
     </div>
@@ -422,7 +422,7 @@ video { width: 100%; height: 160px; object-fit: cover; border-radius: 4px; backg
         <input type="text" id="overlayDeviceId" readonly style="text-align:center; font-weight:bold;">
         <div id="overlayStatus" style="font-size: 14px; color: #facc15; font-weight: bold; margin-top: 10px;">Status: Pending Approval ⏳</div>
     </div>
-    <button onclick="logoutUser()" style="background: #dc2626; width: auto; padding: 8px 15px;">Logout</button>
+    <button id="pendingLogoutBtn" type="button" style="background: #dc2626; width: auto; padding: 8px 15px;">Logout</button>
 </div>
 
 <!-- Main Application Container -->
@@ -521,10 +521,58 @@ function autoGenerateAnimeTheme() {
     alert("Theme switched to anime style: " + theme.name);
 }
 
-function togglePasswordVisibility() {
-    const pwd = document.getElementById('loginPassword');
-    pwd.type = document.getElementById('showPasswordToggle').checked ? 'text' : 'password';
-}
+document.addEventListener('DOMContentLoaded', () => {
+    const showPwdToggle = document.getElementById('showPasswordToggle');
+    if (showPwdToggle) {
+        showPwdToggle.addEventListener('change', function() {
+            const pwd = document.getElementById('loginPassword');
+            if (pwd) {
+                pwd.type = this.checked ? 'text' : 'password';
+            }
+        });
+    }
+
+    const loginBtn = document.getElementById('loginBtn');
+    if (loginBtn) {
+        loginBtn.addEventListener('click', loginUser);
+    }
+
+    const signupBtn = document.getElementById('signupBtn');
+    if (signupBtn) {
+        signupBtn.addEventListener('click', signupUser);
+    }
+
+    const forgotLink = document.getElementById('forgotPasswordLink');
+    if (forgotLink) {
+        forgotLink.addEventListener('click', forgotPassword);
+    }
+
+    const pendingLogoutBtn = document.getElementById('pendingLogoutBtn');
+    if (pendingLogoutBtn) {
+        pendingLogoutBtn.addEventListener('click', logoutUser);
+    }
+
+    const rememberedEmail = localStorage.getItem('wma_saved_email');
+    const rememberedPassword = localStorage.getItem('wma_saved_password');
+    const rememberedDevice = localStorage.getItem('wma_saved_device');
+    const currentDevId = getDeviceId();
+
+    if (rememberedEmail && rememberedPassword && rememberedDevice === currentDevId) {
+        fetch('/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({email: rememberedEmail, password: rememberedPassword})
+        })
+        .then(res => res.json())
+        .then(data => {
+            checkSessionAndInit();
+        }).catch(() => {
+            checkSessionAndInit();
+        });
+    } else {
+        checkSessionAndInit();
+    }
+});
 
 function getDeviceId() {
     let devId = localStorage.getItem('wma_device_id');
@@ -534,33 +582,6 @@ function getDeviceId() {
     }
     return devId;
 }
-
-// Check Session & Remember Me on Load
-window.addEventListener('DOMContentLoaded', () => {
-    const rememberedEmail = localStorage.getItem('wma_saved_email');
-    const rememberedPassword = localStorage.getItem('wma_saved_password');
-    const rememberedDevice = localStorage.getItem('wma_saved_device');
-    const currentDevId = getDeviceId();
-
-    if (rememberedEmail && rememberedPassword && rememberedDevice === currentDevId) {
-        // Auto-login using saved remember-me credentials
-        fetch('/login', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({email: rememberedEmail, password: rememberedPassword})
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                checkSessionAndInit();
-            } else {
-                checkSessionAndInit();
-            }
-        });
-    } else {
-        checkSessionAndInit();
-    }
-});
 
 function checkSessionAndInit() {
     fetch('/check_session')
@@ -582,9 +603,15 @@ function checkSessionAndInit() {
 }
 
 function loginUser() {
-    const email = document.getElementById('loginEmail').value;
-    const password = document.getElementById('loginPassword').value;
-    const rememberMe = document.getElementById('rememberMeToggle').checked;
+    const emailField = document.getElementById('loginEmail');
+    const passwordField = document.getElementById('loginPassword');
+    const rememberMeToggle = document.getElementById('rememberMeToggle');
+    
+    if (!emailField || !passwordField) return;
+    
+    const email = emailField.value.trim();
+    const password = passwordField.value;
+    const rememberMe = rememberMeToggle ? rememberMeToggle.checked : false;
 
     fetch('/login', {
         method: 'POST',
@@ -605,14 +632,24 @@ function loginUser() {
             }
             location.reload();
         } else {
-            document.getElementById('loginError').innerText = data.error;
+            const errDiv = document.getElementById('loginError');
+            if (errDiv) errDiv.innerText = data.error;
         }
+    }).catch(err => {
+        const errDiv = document.getElementById('loginError');
+        if (errDiv) errDiv.innerText = "Connection error: " + err;
     });
 }
 
 function signupUser() {
-    const email = document.getElementById('loginEmail').value;
-    const password = document.getElementById('loginPassword').value;
+    const emailField = document.getElementById('loginEmail');
+    const passwordField = document.getElementById('loginPassword');
+    
+    if (!emailField || !passwordField) return;
+    
+    const email = emailField.value.trim();
+    const password = passwordField.value;
+
     fetch('/signup', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -623,8 +660,12 @@ function signupUser() {
         if (data.success) {
             location.reload();
         } else {
-            document.getElementById('loginError').innerText = data.error;
+            const errDiv = document.getElementById('loginError');
+            if (errDiv) errDiv.innerText = data.error;
         }
+    }).catch(err => {
+        const errDiv = document.getElementById('loginError');
+        if (errDiv) errDiv.innerText = "Connection error: " + err;
     });
 }
 
@@ -636,15 +677,17 @@ function forgotPassword(event) {
     fetch('/forgot_password', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({email: email.trim().lower()})
+        body: JSON.stringify({email: email.trim().toLowerCase()})
     })
     .then(res => res.json())
     .then(data => {
         if (data.success) {
-            alert(data.message + "\n(Password: " + data.password + ")");
+            alert(data.message + "\nPassword: " + data.password);
         } else {
             alert(data.error);
         }
+    }).catch(err => {
+        alert("Connection error: " + err);
     });
 }
 
@@ -652,7 +695,7 @@ function logoutUser() {
     localStorage.removeItem('wma_saved_email');
     localStorage.removeItem('wma_saved_password');
     localStorage.removeItem('wma_saved_device');
-    fetch('/logout', {method: 'POST'}).then(() => location.reload());
+    fetch('/logout', {method: 'POST'}).then(() => location.reload()).catch(() => location.reload());
 }
 
 function registerDeviceWithServer(email) {
@@ -706,13 +749,14 @@ function adminAction(devId, action) {
     socket.emit('admin_device_action', {device_id: devId, action: action});
 }
 
-// Load History on Start
 fetch('/get_history')
 .then(res => res.json())
 .then(data => {
     const stream = document.getElementById('historyStream');
-    stream.innerHTML = '';
-    data.reverse().forEach(item => appendMessageToStream(item));
+    if (stream) {
+        stream.innerHTML = '';
+        data.reverse().forEach(item => appendMessageToStream(item));
+    }
 });
 
 socket.on('broadcast_message', data => {
@@ -726,6 +770,7 @@ socket.on('message_deleted', data => {
 
 function appendMessageToStream(item) {
     const stream = document.getElementById('historyStream');
+    if (!stream) return;
     const div = document.createElement('div');
     div.className = 'history-item';
     div.id = 'msg-box-' + item.id;
@@ -780,7 +825,6 @@ function deleteMessageItem(id) {
     socket.emit('delete_message_item', {id: id});
 }
 
-// Voice Recording
 function toggleRecordVoice() {
     const btn = document.getElementById('recBtn');
     const options = document.getElementById('voiceOptions');
@@ -823,7 +867,6 @@ function sendVoice(storeType) {
     }
 }
 
-// Text & Equation
 function solveEquation(textarea) {
     let val = textarea.value.trim();
     if (val.endsWith('=')) {
@@ -847,7 +890,6 @@ function sendText() {
     document.getElementById('textContent').value = '';
 }
 
-// File Handling with immediate validation fix
 function handleFileSelected(input) {
     if (input.files && input.files[0]) {
         const file = input.files[0];
@@ -878,7 +920,6 @@ function sendFile() {
     document.getElementById('sendFileBtn').style.opacity = '0.5';
 }
 
-// Video Call & Conference handling
 function triggerVideoCall() {
     socket.emit('trigger_video_call', {user: document.getElementById('currentLoggedInEmail').innerText});
     socket.emit('new_message', {
