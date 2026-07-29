@@ -224,6 +224,7 @@ def get_devices():
 def get_history():
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
+    # Life time access: Expiration checks removed, returns all saved messages ordered by id descending
     cursor.execute('SELECT id, user_info, msg_type, content, filename, store_type, timestamp FROM history ORDER BY id DESC')
     rows = cursor.fetchall()
     conn.close()
@@ -294,20 +295,16 @@ def handle_new_message(data):
     msg_type = data.get('type')
     content = data.get('content')
     filename = data.get('filename', '')
-    store = data.get('store', '48h')
+    store = data.get('store', 'Life time')
     
     now = datetime.now()
-    if store == '5m':
-        expire_at = now + timedelta(minutes=5)
-    elif store == '1h':
-        expire_at = now + timedelta(hours=1)
-    else:
-        expire_at = now + timedelta(hours=48)
+    # Life time access: Set a far future expiration or keep timestamp without auto-deletion constraints
+    expire_at = now + timedelta(days=36500)
         
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
     cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                   (user, msg_type, content, filename, store, expire_at, now.strftime('%Y-%m-%d %H:%M:%S')))
+                   (user, msg_type, content, filename, 'Life time', expire_at, now.strftime('%Y-%m-%d %H:%M:%S')))
     msg_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -318,7 +315,7 @@ def handle_new_message(data):
         "type": msg_type,
         "content": content,
         "filename": filename,
-        "store": store,
+        "store": 'Life time',
         "timestamp": now.strftime('%Y-%m-%d %H:%M:%S')
     })
 
@@ -504,10 +501,7 @@ HTML_PAGE = """
                 <h4>Function 1: Voice Message (Max 3s)</h4>
                 <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
                 <div id="voiceOptions" style="display:none; margin-top: 10px;">
-                    <p style="font-size: 12px; margin: 5px 0;">Storage Duration ရွေးပါ:</p>
-                    <button onclick="sendVoice('5m')">5 Minutes</button>
-                    <button onclick="sendVoice('1h')">1 Hour</button>
-                    <button onclick="sendVoice('48h')">48 Hours</button>
+                    <button onclick="sendVoice('Life time')" style="background: var(--accent-color);">Send Voice (Life time access)</button>
                 </div>
             </div>
 
@@ -521,12 +515,12 @@ HTML_PAGE = """
             <div class="card">
                 <h4>Function 3: Text & Universal Equation</h4>
                 <textarea id="textContent" rows="3" placeholder="Write text or equation (e.g. 50 * 20 =)" oninput="solveEquation(this)"></textarea>
-                <button onclick="sendText()">Send Text (48h)</button>
+                <button onclick="sendText()">Send Text (Life time)</button>
             </div>
 
             <!-- Function 4: File or Image -->
             <div class="card">
-                <h4>Function 4: Original File or Image (48h)</h4>
+                <h4>Function 4: Original File or Image (Life time)</h4>
                 <input type="file" id="fileInput" onchange="handleFileSelected(this)">
                 <button id="sendFileBtn" onclick="sendFile()" disabled style="opacity: 0.5;">Send File / Image</button>
             </div>
@@ -785,7 +779,7 @@ HTML_PAGE = """
             if (item.type === 'text') {
                 contentHtml = `<div><b>${item.user}:</b> ${item.content}</div>`;
             } else if (item.type === 'voice') {
-                contentHtml = `<div><b>${item.user} [Voice - ${item.store}]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
+                contentHtml = `<div><b>${item.user} [Voice - Life time]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
             } else if (item.type === 'file') {
                 if (item.filename && (item.filename.endsWith('.jpg') || item.filename.endsWith('.png') || item.filename.endsWith('.jpeg'))) {
                     contentHtml = `<div><b>${item.user} [Image]:</b><br><img src="${item.content}" class="chat-image-preview"></div>`;
@@ -867,7 +861,7 @@ HTML_PAGE = """
                     user: document.getElementById('currentLoggedInEmail').innerText,
                     type: 'voice',
                     content: window.tempVoiceData,
-                    store: storeType
+                    store: 'Life time'
                 });
                 document.getElementById('voiceOptions').style.display = 'none';
                 window.tempVoiceData = null;
@@ -892,7 +886,7 @@ HTML_PAGE = """
                 user: document.getElementById('currentLoggedInEmail').innerText,
                 type: 'text',
                 content: content,
-                store: '48h'
+                store: 'Life time'
             });
             document.getElementById('textContent').value = '';
         }
@@ -918,7 +912,7 @@ HTML_PAGE = """
                 type: 'file',
                 content: selectedFileBase64,
                 filename: selectedFileName,
-                store: '48h'
+                store: 'Life time'
             });
             document.getElementById('fileInput').value = '';
             selectedFileBase64 = null;
@@ -934,7 +928,7 @@ HTML_PAGE = """
                 user: currentUser,
                 type: 'videocall_alert',
                 content: 'Triggered conference',
-                store: '5m'
+                store: 'Life time'
             });
             startConferenceUI(currentUser);
         }
