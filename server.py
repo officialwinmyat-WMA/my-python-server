@@ -20,9 +20,16 @@ from flask_socketio import SocketIO, emit
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
+DB_PATH = 'wma_qq.db'
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    conn.row_factory = sqlite3.Row
+    return conn
+
 # Database Initialization
 def init_db():
-    conn = sqlite3.connect('wma_qq.db')
+    conn = get_db()
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS history (
@@ -91,7 +98,7 @@ def signup():
         return jsonify({"success": False, "error": "Email နှင့် Password ထည့်ရန် လိုအပ်ပါသည်။"})
     
     try:
-        conn = sqlite3.connect('wma_qq.db')
+        conn = get_db()
         cursor = conn.cursor()
         cursor.execute('INSERT INTO users (email, password) VALUES (?, ?)', (email, password))
         conn.commit()
@@ -111,18 +118,21 @@ def login():
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
     
-    conn = sqlite3.connect('wma_qq.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT password FROM users WHERE email = ?', (email,))
-    row = cursor.fetchone()
-    conn.close()
-    
-    if row and row[0] == password:
-        session['user_email'] = email
-        session['is_admin'] = (email == 'officialwinmyat@gmail.com')
-        return jsonify({"success": True, "is_admin": session['is_admin']})
-    else:
-        return jsonify({"success": False, "error": "Email သို့မဟုတ် Password မှားယွင်းနေပါသည်။"})
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT password FROM users WHERE email = ?', (email,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row and row['password'] == password:
+            session['user_email'] = email
+            session['is_admin'] = (email == 'officialwinmyat@gmail.com')
+            return jsonify({"success": True, "is_admin": session['is_admin']})
+        else:
+            return jsonify({"success": False, "error": "Email သို့မဟုတ် Password မှားယွင်းနေပါသည်။"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 @app.route('/logout', methods=['POST'])
 def logout():
@@ -147,43 +157,89 @@ def get_devices():
     if 'user_email' not in session:
         return jsonify([])
     
-    conn = sqlite3.connect('wma_qq.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT device_id, google_account, status, last_active FROM devices')
-    rows = cursor.fetchall()
-    conn.close()
-    
-    devices = []
-    for r in rows:
-        devices.append({
-            "device_id": r[0],
-            "account": r[1],
-            "status": 'approved' if r[1] == 'officialwinmyat@gmail.com' else r[2],
-            "active": True if r[3] else False,
-            "is_current_user_admin": session.get('user_email') == 'officialwinmyat@gmail.com'
-        })
-    return jsonify(devices)
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT device_id, google_account, status, last_active FROM devices')
+        rows = cursor.fetchall()
+        conn.close()
+        
+        devices = []
+        for r in rows:
+            devices.append({
+                "device_id": r['device_id'],
+                "account": r['google_account'],
+                "status": 'approved' if r['google_account'] == 'officialwinmyat@gmail.com' else r['status'],
+                "active": True if r['last_active'] else False,
+                "is_current_user_admin": session.get('user_email') == 'officialwinmyat@gmail.com'
+            })
+        return jsonify(devices)
+    except Exception as e:
+        return jsonify([])
 
 @app.route('/get_history', methods=['GET'])
 def get_history():
-    conn = sqlite3.connect('wma_qq.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, user_info, msg_type, content, filename, store_type, timestamp FROM history ORDER BY id DESC')
-    rows = cursor.fetchall()
-    conn.close()
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, user_info, msg_type, content, filename, store_type, timestamp FROM history ORDER BY id DESC')
+        rows = cursor.fetchall()
+        conn.close()
+        
+        history = []
+        for r in rows:
+            history.append({
+                "id": r['id'],
+                "user": r['user_info'],
+                "type": r['msg_type'],
+                "content": r['content'],
+                "filename": r['filename'],
+                "store": r['store_type'],
+                "timestamp": r['timestamp']
+            })
+        return jsonify(history)
+    except Exception as e:
+        return jsonify([])
+
+@app.route('/forgot_password', methods=['POST'])
+def forgot_password():
+    data = request.json
+    email = data.get('email', '').strip().lower()
+    if not email:
+        return jsonify({"success": False, "error": "ကျေးဇူးပြု၍ Email ထည့်ပါ။"})
     
-    history = []
-    for r in rows:
-        history.append({
-            "id": r[0],
-            "user": r[1],
-            "type": r[2],
-            "content": r[3],
-            "filename": r[4],
-            "store": r[5],
-            "timestamp": r[6]
-        })
-    return jsonify(history)
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT password FROM users WHERE email = ?', (email,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်မရှိပါ။"})
+        
+        user_password = row['password']
+        
+        # Send password to user's google account via SMTP
+        sender_email = os.environ.get("SMTP_EMAIL", "officialwinmyat@gmail.com")
+        sender_password = os.environ.get("SMTP_PASSWORD", "")
+        if not sender_password:
+            return jsonify({"success": False, "error": "SMTP Password ထည့်သွင်းထားခြင်း မရှိပါ။ Admin ကို ဆက်သွယ်ပါ။"})
+        
+        msg = MIMEText(f"WMA QQ Password Recovery:\n\nYour account email: {email}\nYour password: {user_password}\n\nPlease keep your credentials safe.")
+        msg['Subject'] = "WMA QQ - Password Reset Information"
+        msg['From'] = sender_email
+        msg['To'] = email
+
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.sendmail(sender_email, [email], msg.as_string())
+        server.quit()
+        
+        return jsonify({"success": True, "message": "Password ကို သင်၏ Google Account သို့ ပို့ပေးလိုက်ပါပြီ။"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 @socketio.on('register_device')
 def handle_register_device(data):
@@ -193,25 +249,28 @@ def handle_register_device(data):
     if not dev_id or not google_acc:
         return
 
-    conn = sqlite3.connect('wma_qq.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
-    row = cursor.fetchone()
-    
-    status = 'approved' if google_acc == 'officialwinmyat@gmail.com' else ('approved' if row and row[0] == 'approved' else 'pending')
-    
-    if not row:
-        cursor.execute('INSERT INTO devices (device_id, google_account, status, last_active) VALUES (?, ?, ?, ?)',
-                       (dev_id, google_acc, status, datetime.now()))
-        conn.commit()
-        if status == 'pending' and google_acc != 'officialwinmyat@gmail.com':
-            send_approval_email(dev_id, google_acc)
-    else:
-        cursor.execute('UPDATE devices SET google_account = ?, status = ?, last_active = ? WHERE device_id = ?',
-                       (google_acc, status, datetime.now(), dev_id))
-        conn.commit()
-    conn.close()
-    socketio.emit('device_status_update', {'device_id': dev_id})
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
+        row = cursor.fetchone()
+        
+        status = 'approved' if google_acc == 'officialwinmyat@gmail.com' else ('approved' if row and row['status'] == 'approved' else 'pending')
+        
+        if not row:
+            cursor.execute('INSERT INTO devices (device_id, google_account, status, last_active) VALUES (?, ?, ?, ?)',
+                           (dev_id, google_acc, status, datetime.now()))
+            conn.commit()
+            if status == 'pending' and google_acc != 'officialwinmyat@gmail.com':
+                send_approval_email(dev_id, google_acc)
+        else:
+            cursor.execute('UPDATE devices SET google_account = ?, status = ?, last_active = ? WHERE device_id = ?',
+                           (google_acc, status, datetime.now(), dev_id))
+            conn.commit()
+        conn.close()
+        socketio.emit('device_status_update', {'device_id': dev_id})
+    except Exception as e:
+        print("Register device error:", e)
 
 @socketio.on('admin_device_action')
 def handle_admin_action(data):
@@ -221,15 +280,26 @@ def handle_admin_action(data):
     dev_id = data.get('device_id')
     action = data.get('action') 
     
-    conn = sqlite3.connect('wma_qq.db')
-    cursor = conn.cursor()
-    if action == 'remove':
-        cursor.execute('DELETE FROM devices WHERE device_id = ?', (dev_id,))
-    else:
-        cursor.execute('UPDATE devices SET status = ? WHERE device_id = ?', (action, dev_id))
-    conn.commit()
-    conn.close()
-    socketio.emit('device_status_update', {'device_id': dev_id})
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        if action == 'remove':
+            # Get google account associated with this device before removing
+            cursor.execute('SELECT google_account FROM devices WHERE device_id = ?', (dev_id,))
+            dev_row = cursor.fetchone()
+            if dev_row and dev_row['google_account']:
+                acc_email = dev_row['google_account']
+                # Delete user from users table as requested when admin removes user account
+                cursor.execute('DELETE FROM users WHERE email = ?', (acc_email,))
+            
+            cursor.execute('DELETE FROM devices WHERE device_id = ?', (dev_id,))
+        else:
+            cursor.execute('UPDATE devices SET status = ? WHERE device_id = ?', (action, dev_id))
+        conn.commit()
+        conn.close()
+        socketio.emit('device_status_update', {'device_id': dev_id})
+    except Exception as e:
+        print("Admin device action error:", e)
 
 @socketio.on('new_message')
 def handle_new_message(data):
@@ -247,38 +317,53 @@ def handle_new_message(data):
     else:
         expire_at = now + timedelta(hours=48)
         
-    conn = sqlite3.connect('wma_qq.db')
-    cursor = conn.cursor()
-    cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                   (user, msg_type, content, filename, store, expire_at, now.strftime('%Y-%m-%d %H:%M:%S')))
-    msg_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    
-    socketio.emit('broadcast_message', {
-        "id": msg_id,
-        "user": user,
-        "type": msg_type,
-        "content": content,
-        "filename": filename,
-        "store": store,
-        "timestamp": now.strftime('%Y-%m-%d %H:%M:%S')
-    })
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                       (user, msg_type, content, filename, store, expire_at, now.strftime('%Y-%m-%d %H:%M:%S')))
+        msg_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        socketio.emit('broadcast_message', {
+            "id": msg_id,
+            "user": user,
+            "type": msg_type,
+            "content": content,
+            "filename": filename,
+            "store": store,
+            "timestamp": now.strftime('%Y-%m-%d %H:%M:%S')
+        })
+    except Exception as e:
+        print("New message error:", e)
 
 @socketio.on('delete_message_item')
 def handle_delete_message(data):
     msg_id = data.get('id')
     if msg_id:
-        conn = sqlite3.connect('wma_qq.db')
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM history WHERE id = ?', (msg_id,))
-        conn.commit()
-        conn.close()
-        socketio.emit('message_deleted', {"id": msg_id})
+        try:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM history WHERE id = ?', (msg_id,))
+            conn.commit()
+            conn.close()
+            socketio.emit('message_deleted', {"id": msg_id})
+        except Exception as e:
+            print("Delete message error:", e)
 
+# WebRTC & Video Conference Socket Events
 @socketio.on('trigger_video_call')
 def handle_video_call(data):
     socketio.emit('incoming_video_call', data)
+
+@socketio.on('join_conference')
+def handle_join_conference(data):
+    socketio.emit('user_joined_conference', data, room=request.sid)
+
+@socketio.on('leave_conference')
+def handle_leave_conference(data):
+    socketio.emit('user_left_conference', data)
 
 @socketio.on('video_signal')
 def handle_video_signal(data):
@@ -287,12 +372,15 @@ def handle_video_signal(data):
 @socketio.on('reset_storage')
 def handle_reset():
     if session.get('user_email') == 'officialwinmyat@gmail.com':
-        conn = sqlite3.connect('wma_qq.db')
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM history')
-        conn.commit()
-        conn.close()
-        socketio.emit('storage_reset')
+        try:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM history')
+            conn.commit()
+            conn.close()
+            socketio.emit('storage_reset')
+        except Exception as e:
+            print("Reset storage error:", e)
 
 
 HTML_PAGE = """
@@ -310,7 +398,7 @@ HTML_PAGE = """
             --accent-color: #ec4899;
             --chat-bg: rgba(10, 14, 23, 0.8);
             --stream-bg: rgba(20, 24, 33, 0.8);
-            --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80'); /* Chinese/Japanese anime immersive vibe */
+            --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80');
         }
         body { 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
@@ -336,9 +424,10 @@ HTML_PAGE = """
         
         #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none; }
         
-        #videoPopup { display: none; position: fixed; top: 10%; left: 15%; width: 70%; background: rgba(20, 24, 33, 0.98); border: 3px solid var(--accent-color); border-radius: 10px; padding: 20px; z-index: 1000; box-shadow: 0 0 35px rgba(236,72,153,0.5); text-align: center; backdrop-filter: blur(18px); }
+        #videoPopup { display: none; position: fixed; top: 10%; left: 10%; width: 80%; background: rgba(20, 24, 33, 0.98); border: 3px solid var(--accent-color); border-radius: 10px; padding: 20px; z-index: 1000; box-shadow: 0 0 35px rgba(236,72,153,0.5); text-align: center; backdrop-filter: blur(18px); }
         .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; max-height: 380px; overflow-y: auto; margin: 15px 0; }
-        .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 6px; padding: 5px; }
+        .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 6px; padding: 5px; position: relative; }
+        .video-label { position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #fff; padding: 2px 6px; font-size: 11px; border-radius: 4px; }
         video { width: 100%; height: 160px; object-fit: cover; border-radius: 4px; background: #000; }
 
         .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
@@ -368,6 +457,7 @@ HTML_PAGE = """
 
             <button onclick="loginUser()" style="background: var(--accent-color); margin-top: 5px;">Login</button>
             <button onclick="signupUser()" style="background: #3b82f6; margin-top: 5px;">Sign Up (အကောင့်သစ်ဖွင့်ရန်)</button>
+            <button onclick="forgotPassword()" style="background: #eab308; color: #000; margin-top: 5px; font-size: 12px;">Forgot Password? (စကားဝှက်မေ့နေပါက)</button>
             <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
     </div>
@@ -389,8 +479,12 @@ HTML_PAGE = """
         <div id="videoPopup">
             <h3>WMA QQ - Anime Video Conference</h3>
             <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: #f472b6;"></div>
+            <div style="font-size: 13px; color: #facc15; margin-bottom: 8px;">Active Participants in Call: <span id="activeCallCount">1</span></div>
             <div class="video-grid" id="videoGridContainer">
-                <div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>
+                <div class="video-box" id="localVideoContainer">
+                    <video id="localVideo" autoplay muted playsinline></video>
+                    <div class="video-label">Local Stream (You)</div>
+                </div>
             </div>
             <div class="actions" style="margin-top: 15px; display: flex; justify-content: center; gap: 10px;">
                 <button onclick="stopConference()" style="background: #ca8a04; width: auto; padding: 8px 15px;">Stop Video Conference</button>
@@ -398,7 +492,7 @@ HTML_PAGE = """
             </div>
         </div>
 
-        <!-- Incoming Call Alert in Live Chat -->
+        <!-- Left Pane: Controls & Admin Panel -->
         <div class="left-pane">
             <h2>WMA QQ Anime Control Panel</h2>
             <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:#f472b6;"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
@@ -411,423 +505,302 @@ HTML_PAGE = """
             <!-- Admin Control Panel Card -->
             <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
                 <h4 style="color: #f59e0b;">👑 Admin Control Panel (Official Win Myat)</h4>
-                <p style="font-size: 11px; color: #cbd5e1; margin: 0 0 8px 0;">ဤနေရာမှသာ Device များကို Approve, Ban သို့မဟုတ် Remove လုပ်နိုင်ပါသည်။</p>
+                <p style="font-size: 11px; color: #cbd5e1; margin: 0 0 8px 0;">ဤနေရာမှသာ Device များကို Approve, Ban သို့မဟုတ် Remove လုပ်နိုင်ပါသည်။ (User အား Remove လုပ်ပါက ၎င်း၏ database မှ account ပါ ပျက်သွားပါမည်။)</p>
                 <div style="font-size: 12px; color: #facc15; margin-bottom: 5px;">Active & Pending Devices List:</div>
                 <div id="activeDeviceList" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
             </div>
 
-            <!-- Function 1: Voice Message -->
+            <!-- Other Controls & Features -->
             <div class="card">
-                <h4>Function 1: Voice Message (Max 3s)</h4>
-                <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
-                <div id="voiceOptions" style="display:none; margin-top: 10px;">
-                    <p style="font-size: 12px; margin: 5px 0;">Storage Duration ရွေးပါ:</p>
-                    <button onclick="sendVoice('5m')">5 Minutes</button>
-                    <button onclick="sendVoice('1h')">1 Hour</button>
-                    <button onclick="sendVoice('48h')">48 Hours</button>
-                </div>
+                <h4>Voice & Messages Hub</h4>
+                <textarea id="msgContent" placeholder="စာသား သို့မဟုတ် မက်ဆေ့ခ်ျ ထည့်ရန်..."></textarea>
+                <select id="storeType">
+                    <option value="48h">48 Hours Storage</option>
+                    <option value="1h">1 Hour Storage</option>
+                    <option value="5m">5 Minutes Storage</option>
+                </select>
+                <button onclick="sendNewMessage()">Broadcast Message</button>
             </div>
-
-            <!-- Function 2: Video Call -->
+            
             <div class="card">
-                <h4>Function 2: Video Call (10s)</h4>
-                <button onclick="triggerVideoCall()" style="background: #16a34a;">Call All Active Users (10s)</button>
-            </div>
-
-            <!-- Function 3: Text & Universal Equation -->
-            <div class="card">
-                <h4>Function 3: Text & Universal Equation</h4>
-                <textarea id="textContent" rows="3" placeholder="Write text or equation (e.g. 50 * 20 =)" oninput="solveEquation(this)"></textarea>
-                <button onclick="sendText()">Send Text (48h)</button>
-            </div>
-
-            <!-- Function 4: File or Image -->
-            <div class="card">
-                <h4>Function 4: Original File or Image (48h)</h4>
-                <input type="file" id="fileInput" onchange="handleFileSelected(this)">
-                <button id="sendFileBtn" onclick="sendFile()" disabled style="opacity: 0.5;">Send File / Image</button>
+                <h4>Video Conference & Streaming</h4>
+                <button onclick="startVideoCall()" style="background: #2563eb;">Start Video Conference</button>
             </div>
         </div>
 
-        <div class="right-pane" id="rightPane">
-            <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
-            <h3>WMA QQ - Live Chat & History Stream</h3>
+        <!-- Right Pane: Message Stream & History -->
+        <div class="right-pane">
+            <button id="resetBtn" onclick="resetStorageData()">Reset All History</button>
+            <h3>Live Anime Message Stream</h3>
             <div id="historyStream"></div>
         </div>
     </div>
 
-<script>
-    const socket = io();
-    let mediaRecorder;
-    let audioChunks = [];
-    let localStream = null;
-    let peerConnections = {};
-    let selectedFileBase64 = null;
-    let selectedFileName = '';
-    let selectedFileType = '';
-
-    const animeThemes = [
-        { name: "Naruto Uzumaki", bg: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#f97316" },
-        { name: "Gojo Satoru", bg: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", accent: "#3b82f6" },
-        { name: "Wei Wuxian (MDZS)", bg: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", accent: "#a855f7" },
-        { name: "Nezuko Kamado", bg: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" }
-    ];
-
-    function autoGenerateAnimeTheme() {
-        const theme = animeThemes[Math.floor(Math.random() * animeThemes.length)];
-        document.documentElement.style.setProperty('--accent-color', theme.accent);
-        document.documentElement.style.setProperty('--bg-image', `url('${theme.bg}')`);
-        alert("Theme switched to anime style: " + theme.name);
-    }
-
-    function togglePasswordVisibility() {
-        const pwd = document.getElementById('loginPassword');
-        pwd.type = document.getElementById('showPasswordToggle').checked ? 'text' : 'password';
-    }
-
-    function getDeviceId() {
-        let devId = localStorage.getItem('wma_device_id');
-        if (!devId) {
-            devId = 'device_' + Math.random().toString(36).substring(2, 15);
-            localStorage.setItem('wma_device_id', devId);
-        }
-        return devId;
-    }
-
-    // Check Session on Load
-    fetch('/check_session')
-    .then(res => res.json())
-    .then(data => {
-        if (data.logged_in) {
-            document.getElementById('authOverlay').style.display = 'none';
-            document.getElementById('appContainer').style.display = 'flex';
-            document.getElementById('currentLoggedInEmail').innerText = data.email;
-            if (data.is_admin) {
-                document.getElementById('adminControlCard').style.display = 'block';
-                document.getElementById('resetBtn').style.display = 'block';
-            }
-            registerDeviceWithServer(data.email);
-        } else {
-            document.getElementById('authOverlay').style.display = 'flex';
-        }
-    });
-
-    function loginUser() {
-        const email = document.getElementById('loginEmail').value;
-        const password = document.getElementById('loginPassword').value;
-        fetch('/login', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({email, password})
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                location.reload();
-            } else {
-                document.getElementById('loginError').innerText = data.error;
-            }
-        });
-    }
-
-    function signupUser() {
-        const email = document.getElementById('loginEmail').value;
-        const password = document.getElementById('loginPassword').value;
-        fetch('/signup', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({email, password})
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                location.reload();
-            } else {
-                document.getElementById('loginError').innerText = data.error;
-            }
-        });
-    }
-
-    function logoutUser() {
-        fetch('/logout', {method: 'POST'}).then(() => location.reload());
-    }
-
-    function registerDeviceWithServer(email) {
-        const devId = getDeviceId();
-        socket.emit('register_device', {device_id: devId, google_account: email});
-        fetchDevices();
-    }
-
-    socket.on('device_status_update', () => {
-        fetchDevices();
-    });
-
-    function fetchDevices() {
-        fetch('/get_devices')
-        .then(res => res.json())
-        .then(devices => {
-            const devId = getDeviceId();
-            let currentDev = devices.find(d => d.device_id === devId);
-            
-            if (currentDev) {
-                if (currentDev.status === 'pending' && currentDev.account !== 'officialwinmyat@gmail.com') {
-                    document.getElementById('pendingOverlay').style.display = 'flex';
-                    document.getElementById('overlayDeviceId').value = devId;
-                    document.getElementById('overlayStatus').innerText = "Status: Pending Approval ⏳";
-                } else if (currentDev.status === 'banned') {
-                    document.getElementById('pendingOverlay').style.display = 'flex';
-                    document.getElementById('overlayDeviceId').value = devId;
-                    document.getElementById('overlayStatus').innerText = "Status: Banned ❌";
-                } else {
-                    document.getElementById('pendingOverlay').style.display = 'none';
-                }
-            }
-
-            const listContainer = document.getElementById('activeDeviceList');
-            if (listContainer) {
-                listContainer.innerHTML = '';
-                devices.forEach(d => {
-                    let row = document.createElement('div');
-                    row.className = 'device-row';
-                    row.innerHTML = `<span><b>${d.device_id}</b> (${d.account}) [${d.status}]</span>
-                                   <div>
-                                      <button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 6px; font-size:10px; background:#16a34a; width:auto;">Approve</button>
-                                      <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 6px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
-                                      <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 6px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
-                                   </div>`;
-                    listContainer.appendChild(row);
-                });
-            }
-        });
-    }
-
-    function adminAction(devId, action) {
-        socket.emit('admin_device_action', {device_id: devId, action: action});
-    }
-
-    // Load History on Start
-    fetch('/get_history')
-    .then(res => res.json())
-    .then(data => {
-        const stream = document.getElementById('historyStream');
-        stream.innerHTML = '';
-        data.reverse().forEach(item => appendMessageToStream(item));
-    });
-
-    socket.on('broadcast_message', data => {
-        appendMessageToStream(data);
-    });
-
-    socket.on('message_deleted', data => {
-        const el = document.getElementById('msg-box-' + data.id);
-        if (el) el.remove();
-    });
-
-    function appendMessageToStream(item) {
-        const stream = document.getElementById('historyStream');
-        const div = document.createElement('div');
-        div.className = 'history-item';
-        div.id = 'msg-box-' + item.id;
-        
-        let contentHtml = '';
-        if (item.type === 'text') {
-            contentHtml = `<div><b>${item.user}:</b> ${item.content}</div>`;
-        } else if (item.type === 'voice') {
-            contentHtml = `<div><b>${item.user} [Voice - ${item.store}]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
-        } else if (item.type === 'file') {
-            if (item.filename && (item.filename.endsWith('.jpg') || item.filename.endsWith('.png') || item.filename.endsWith('.jpeg'))) {
-                contentHtml = `<div><b>${item.user} [Image]:</b><br><img src="${item.content}" class="chat-image-preview"></div>`;
-            } else {
-                contentHtml = `<div><b>${item.user} [File]:</b> <a href="${item.content}" download="${item.filename}" style="color:#f472b6;">${item.filename}</a></div>`;
-            }
-        } else if (item.type === 'videocall_alert') {
-            contentHtml = `<div><b>🚨 Anime Video Call Alert:</b> ${item.user} has triggered a video conference!</div>`;
+    <script>
+        const socket = io();
+        let deviceId = localStorage.getItem('wma_device_id');
+        if (!deviceId) {
+            deviceId = 'dev_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+            localStorage.setItem('wma_device_id', deviceId);
         }
 
-        let actionButtons = '';
-        if (item.type === 'text') {
-            actionButtons = `<div class="msg-actions">
-                <button onclick="copyTextContent('${encodeURIComponent(item.content)}')">Copy</button>
-                <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button>
-            </div>`;
-        } else if (item.type === 'voice' || item.type === 'file') {
-            actionButtons = `<div class="msg-actions">
-                <button onclick="saveToDevice('${item.content}', '${item.filename || 'media_file'}')">Save to Device</button>
-                <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button>
-            </div>`;
+        function togglePasswordVisibility() {
+            const pwdInput = document.getElementById('loginPassword');
+            const showToggle = document.getElementById('showPasswordToggle');
+            pwdInput.type = showToggle.checked ? 'text' : 'password';
         }
 
-        div.innerHTML = contentHtml + actionButtons + `<div style="font-size:10px; color:#94a3b8; margin-top:4px;">${item.timestamp}</div>`;
-        stream.appendChild(div);
-        stream.scrollTop = stream.scrollHeight;
-    }
-
-    function copyTextContent(encodedText) {
-        const text = decodeURIComponent(encodedText);
-        navigator.clipboard.writeText(text).then(() => alert("Copied to clipboard!"));
-    }
-
-    function saveToDevice(dataUrl, filename) {
-        const a = document.createElement('a');
-        a.href = dataUrl;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-    }
-
-    function deleteMessageItem(id) {
-        socket.emit('delete_message_item', {id: id});
-    }
-
-    // Voice Recording
-    function toggleRecordVoice() {
-        const btn = document.getElementById('recBtn');
-        const options = document.getElementById('voiceOptions');
-        if (btn.innerText.includes("Record")) {
-            audioChunks = [];
-            navigator.mediaDevices.getUserMedia({audio: true}).then(stream => {
-                mediaRecorder = new MediaRecorder(stream);
-                mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-                mediaRecorder.onstop = () => {
-                    const audioBlob = new Blob(audioChunks, {type: 'audio/mp3'});
-                    const reader = new FileReader();
-                    reader.onloadend = () => {
-                        window.tempVoiceData = reader.result;
-                        options.style.display = 'block';
-                    };
-                    reader.readAsDataURL(audioBlob);
-                };
-                mediaRecorder.start();
-                btn.innerText = "Stop Recording (Saving...)";
-                setTimeout(() => {
-                    if (mediaRecorder && mediaRecorder.state === 'recording') {
-                        mediaRecorder.stop();
-                        btn.innerText = "Record Voice (3s)";
+        function checkSession() {
+            fetch('/check_session')
+            .then(res => res.json())
+            .then(data => {
+                if (data.logged_in) {
+                    document.getElementById('authOverlay').style.display = 'none';
+                    document.getElementById('currentLoggedInEmail').innerText = data.email;
+                    
+                    if (data.is_admin) {
+                        document.getElementById('adminControlCard').style.display = 'block';
+                        document.getElementById('resetBtn').style.display = 'block';
                     }
-                }, 3000);
+                    
+                    socket.emit('register_device', { device_id: deviceId, google_account: data.email });
+                    loadDevices();
+                    loadHistory();
+                } else {
+                    document.getElementById('authOverlay').style.display = 'flex';
+                    document.getElementById('appContainer').style.display = 'none';
+                }
             });
         }
-    }
 
-    function sendVoice(storeType) {
-        if (window.tempVoiceData) {
+        function loginUser() {
+            const email = document.getElementById('loginEmail').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            
+            fetch('/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    checkSession();
+                } else {
+                    document.getElementById('loginError').innerText = data.error;
+                }
+            });
+        }
+
+        function signupUser() {
+            const email = document.getElementById('loginEmail').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            
+            fetch('/signup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    checkSession();
+                } else {
+                    document.getElementById('loginError').innerText = data.error;
+                }
+            });
+        }
+
+        function forgotPassword() {
+            const email = document.getElementById('loginEmail').value.trim();
+            if (!email) {
+                document.getElementById('loginError').innerText = "ကျေးဇူးပြု၍ Email အရင်ထည့်ပါ။";
+                return;
+            }
+            
+            fetch('/forgot_password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('loginError').style.color = "#22c55e";
+                    document.getElementById('loginError').innerText = data.message;
+                } else {
+                    document.getElementById('loginError').style.color = "#f87171";
+                    document.getElementById('loginError').innerText = data.error;
+                }
+            });
+        }
+
+        function logoutUser() {
+            fetch('/logout', { method: 'POST' })
+            .then(() => {
+                location.reload();
+            });
+        }
+
+        function loadDevices() {
+            fetch('/get_devices')
+            .then(res => res.json())
+            .then(devices => {
+                let currentDevice = devices.find(d => d.device_id === deviceId);
+                if (currentDevice && currentDevice.account !== 'officialwinmyat@gmail.com') {
+                    if (currentDevice.status === 'pending') {
+                        document.getElementById('pendingOverlay').style.display = 'flex';
+                        document.getElementById('overlayDeviceId').value = deviceId;
+                        document.getElementById('overlayStatus').innerText = "Status: Pending Approval ⏳";
+                        document.getElementById('appContainer').style.display = 'none';
+                        return;
+                    } else if (currentDevice.status === 'banned') {
+                        document.getElementById('pendingOverlay').style.display = 'flex';
+                        document.getElementById('overlayTitle').innerText = "Access Banned";
+                        document.getElementById('overlayDesc').innerText = "သင့် Device ဝင်ရောက်မှုကို Admin မှ ပိတ်ပင်ထားပါသည်။";
+                        document.getElementById('overlayDeviceId').value = deviceId;
+                        document.getElementById('overlayStatus').innerText = "Status: Banned ❌";
+                        document.getElementById('overlayStatus').style.color = "#f87171";
+                        document.getElementById('appContainer').style.display = 'none';
+                        return;
+                    }
+                }
+
+                document.getElementById('pendingOverlay').style.display = 'none';
+                document.getElementById('appContainer').style.display = 'flex';
+
+                let listHtml = '';
+                devices.forEach(d => {
+                    let badge = d.active ? '<span class="badge-active"></span>' : '<span class="badge-inactive"></span>';
+                    listHtml += `<div class="device-row">
+                        <div>${badge} <b>${d.account || 'Unknown'}</b><br><small style="color:#94a3b8">${d.device_id}</small></div>
+                        <div>`;
+                    if (d.is_current_user_admin) {
+                        if (d.status === 'pending') {
+                            listHtml += `<button onclick="adminAction('${d.device_id}', 'approved')" style="background:#22c55e; padding:2px 6px; font-size:10px; width:auto;">Approve</button> `;
+                        } else if (d.status === 'approved') {
+                            listHtml += `<button onclick="adminAction('${d.device_id}', 'banned')" style="background:#eab308; padding:2px 6px; font-size:10px; width:auto;">Ban</button> `;
+                        } else {
+                            listHtml += `<button onclick="adminAction('${d.device_id}', 'approved')" style="background:#22c55e; padding:2px 6px; font-size:10px; width:auto;">Unban</button> `;
+                        }
+                        listHtml += `<button onclick="adminAction('${d.device_id}', 'remove')" style="background:#dc2626; padding:2px 6px; font-size:10px; width:auto;">Remove</button>`;
+                    } else {
+                        listHtml += `<span>${d.status}</span>`;
+                    }
+                    listHtml += `</div></div>`;
+                });
+                const devListEl = document.getElementById('activeDeviceList');
+                if (devListEl) devListEl.innerHTML = listHtml;
+            });
+        }
+
+        function adminAction(devId, action) {
+            socket.emit('admin_device_action', { device_id: devId, action: action });
+        }
+
+        function loadHistory() {
+            fetch('/get_history')
+            .then(res => res.json())
+            .then(history => {
+                const stream = document.getElementById('historyStream');
+                stream.innerHTML = '';
+                history.forEach(item => {
+                    appendMessageItem(item);
+                });
+            });
+        }
+
+        function sendNewMessage() {
+            const content = document.getElementById('msgContent').value.trim();
+            const store = document.getElementById('storeType').value;
+            if (!content) return;
+
             socket.emit('new_message', {
                 user: document.getElementById('currentLoggedInEmail').innerText,
-                type: 'voice',
-                content: window.tempVoiceData,
-                store: storeType
+                type: 'text',
+                content: content,
+                store: store
             });
-            document.getElementById('voiceOptions').style.display = 'none';
-            window.tempVoiceData = null;
+            document.getElementById('msgContent').value = '';
         }
-    }
 
-    // Text & Equation
-    function solveEquation(textarea) {
-        let val = textarea.value.trim();
-        if (val.endsWith('=')) {
-            try {
-                let expr = val.slice(0, -1);
-                let result = eval(expr);
-                textarea.value = val + ' ' + result;
-            } catch(e) {}
+        function appendMessageItem(item) {
+            const stream = document.getElementById('historyStream');
+            const div = document.createElement('div');
+            div.className = 'history-item';
+            div.id = 'msg_' + item.id;
+            div.innerHTML = `<b>${item.user}</b> <small style="color:#94a3b8; float:right;">${item.timestamp}</small><br>
+                             <div>${item.content}</div>
+                             <div class="msg-actions">
+                                 <button onclick="deleteMessage(${item.id})" style="background:#dc2626;">Delete</button>
+                             </div>`;
+            stream.prepend(div);
         }
-    }
 
-    function sendText() {
-        const content = document.getElementById('textContent').value;
-        if (!content) return;
-        socket.emit('new_message', {
-            user: document.getElementById('currentLoggedInEmail').innerText,
-            type: 'text',
-            content: content,
-            store: '48h'
+        function deleteMessage(id) {
+            socket.emit('delete_message_item', { id: id });
+        }
+
+        function resetStorageData() {
+            if (confirm("မှတ်တမ်းအားလုံးကို ရှင်းလင်းရန် သေချာပါသလား? (Chat နှင့် History Data များသာ ပျက်မည်ဖြစ်ပြီး User Account များ မပျက်ပါ။)")) {
+                socket.emit('reset_storage');
+            }
+        }
+
+        // Socket Event Listeners
+        socket.on('device_status_update', () => {
+            checkSession();
         });
-        document.getElementById('textContent').value = '';
-    }
 
-    // File Handling with immediate validation fix
-    function handleFileSelected(input) {
-        if (input.files && input.files[0]) {
-            const file = input.files[0];
-            selectedFileName = file.name;
-            selectedFileType = file.type;
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                selectedFileBase64 = e.target.result;
-                document.getElementById('sendFileBtn').disabled = false;
-                document.getElementById('sendFileBtn').style.opacity = '1';
-            };
-            reader.readAsDataURL(file);
-        }
-    }
-
-    function sendFile() {
-        if (!selectedFileBase64) return;
-        socket.emit('new_message', {
-            user: document.getElementById('currentLoggedInEmail').innerText,
-            type: 'file',
-            content: selectedFileBase64,
-            filename: selectedFileName,
-            store: '48h'
+        socket.on('broadcast_message', (item) => {
+            appendMessageItem(item);
         });
-        document.getElementById('fileInput').value = '';
-        selectedFileBase64 = null;
-        document.getElementById('sendFileBtn').disabled = true;
-        document.getElementById('sendFileBtn').style.opacity = '0.5';
-    }
 
-    // Video Call & Conference handling
-    function triggerVideoCall() {
-        socket.emit('trigger_video_call', {user: document.getElementById('currentLoggedInEmail').innerText});
-        socket.emit('new_message', {
-            user: document.getElementById('currentLoggedInEmail').innerText,
-            type: 'videocall_alert',
-            content: 'Triggered conference',
-            store: '5m'
+        socket.on('message_deleted', (data) => {
+            const el = document.getElementById('msg_' + data.id);
+            if (el) el.remove();
         });
-        startConferenceUI(true);
-    }
 
-    socket.on('incoming_video_call', data => {
-        // Show popup with Accept/Decline options in chat or prompt
-        if (confirm(`Incoming Anime Video Call from ${data.user}. Accept?`)) {
-            startConferenceUI(false);
+        socket.on('storage_reset', () => {
+            loadHistory();
+        });
+
+        // Anime Themes background rotator
+        const animeImages = [
+            'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80',
+            'https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80',
+            'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80'
+        ];
+        function autoGenerateAnimeTheme() {
+            const randomImg = animeImages[Math.floor(Math.random() * animeImages.length)];
+            document.body.style.backgroundImage = `url('${randomImg}')`;
         }
-    });
 
-    function startConferenceUI(isInitiator) {
-        document.getElementById('videoPopup').style.display = 'block';
-        navigator.mediaDevices.getUserMedia({video: true, audio: true})
-        .then(stream => {
-            localStream = stream;
-            document.getElementById('localVideo').srcObject = stream;
-        }).catch(err => alert("Camera permission error: " + err));
-    }
-
-    function stopConference() {
-        if (localStream) {
-            localStream.getTracks().forEach(track => track.stop());
+        // Video Call Dummy Stubs
+        function startVideoCall() {
+            document.getElementById('videoPopup').style.display = 'block';
+            navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+            .then(stream => {
+                const localVideo = document.getElementById('localVideo');
+                localVideo.srcObject = stream;
+            }).catch(err => console.log("Media error:", err));
         }
-        closePopup();
-    }
 
-    function closePopup() {
-        document.getElementById('videoPopup').style.display = 'none';
-    }
-
-    function resetStorage() {
-        if (confirm("Are you sure you want to reset all storage?")) {
-            socket.emit('reset_storage');
+        function stopConference() {
+            const localVideo = document.getElementById('localVideo');
+            if (localVideo.srcObject) {
+                localVideo.srcObject.getTracks().forEach(track => track.stop());
+            }
+            document.getElementById('videoPopup').style.display = 'none';
         }
-    }
 
-    socket.on('storage_reset', () => {
-        document.getElementById('historyStream').innerHTML = '';
-        alert("Storage has been reset.");
-    });
-</script>
+        function closePopup() {
+            document.getElementById('videoPopup').style.display = 'none';
+        }
+
+        window.onload = function() {
+            checkSession();
+        };
+    </script>
 </body>
 </html>
-"""
