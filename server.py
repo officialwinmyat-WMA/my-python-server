@@ -1063,7 +1063,7 @@ HTML_PAGE = """
             }
             peerConnections = {};
             
-            # Remove all remote video boxes
+            // Remove all remote video boxes
             let gridContainer = document.getElementById('videoGridContainer');
             gridContainer.innerHTML = '<div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>';
             
@@ -1087,3 +1087,4 @@ HTML_PAGE = """
    </script>
 </body>
 </html>
+"""
