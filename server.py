@@ -455,6 +455,18 @@ HTML_PAGE = """
             </div>
 
             <div class="card">
+                <h3>Send Message / Content</h3>
+                <textarea id="msgContent" placeholder="စာ သို့မဟုတ် Code ရေးရန်..." rows="3"></textarea>
+                <input type="file" id="fileInput">
+                <select id="storeType">
+                    <option value="48h">48 Hours Storage</option>
+                    <option value="1h">1 Hour Storage</option>
+                    <option value="5m">5 Minutes Storage</option>
+                </select>
+                <button onclick="sendMessage()" style="background: var(--accent-color);">Send to Stream</button>
+            </div>
+
+            <div class="card">
                 <h3>Start Video Conference</h3>
                 <button onclick="startConference()" style="background: #10b981;">Start Group Video Call</button>
             </div>
@@ -602,6 +614,53 @@ HTML_PAGE = """
 
         function adminAction(targetDevId, action) {
             socket.emit('admin_device_action', { device_id: targetDevId, action: action });
+        }
+
+        function sendMessage() {
+            const content = document.getElementById('msgContent').value;
+            const store = document.getElementById('storeType').value;
+            const fileInput = document.getElementById('fileInput');
+            
+            if (!content && fileInput.files.length === 0) return;
+            
+            if (fileInput.files.length > 0) {
+                const file = fileInput.files[0];
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const base64Data = e.target.result;
+                    let msgType = 'text';
+                    let finalContent = content;
+                    
+                    if (file.type.startsWith('image/')) {
+                        msgType = 'image';
+                        finalContent = `<img src="${base64Data}" class="chat-image-preview"><br>${content}`;
+                    } else {
+                        msgType = 'file';
+                        finalContent = `<a href="${base64Data}" download="${file.name}" style="color:#f472b6;">📥 Download ${file.name}</a><br>${content}`;
+                    }
+                    
+                    socket.emit('new_message', {
+                        user: currentUserEmail,
+                        type: msgType,
+                        content: finalContent,
+                        filename: file.name,
+                        store: store
+                    });
+                    
+                    document.getElementById('msgContent').value = '';
+                    fileInput.value = '';
+                };
+                reader.readAsDataURL(file);
+            } else {
+                socket.emit('new_message', {
+                    user: currentUserEmail,
+                    type: 'text',
+                    content: content,
+                    filename: '',
+                    store: store
+                });
+                document.getElementById('msgContent').value = '';
+            }
         }
 
         function fetchHistory() {
