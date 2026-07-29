@@ -58,6 +58,18 @@ def init_db():
 
 init_db()
 
+# Background task or query check to auto-delete messages older than 48 hours
+def clean_expired_history():
+    try:
+        conn = sqlite3.connect('wma_qq.db')
+        cursor = conn.cursor()
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute('DELETE FROM history WHERE expire_at < ?', (now_str,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Cleanup error:", e)
+
 def send_approval_email(device_id, google_account):
     try:
         sender_email = os.environ.get("SMTP_EMAIL", "officialwinmyat@gmail.com")
@@ -222,9 +234,10 @@ def get_devices():
 
 @app.route('/get_history', methods=['GET'])
 def get_history():
+    clean_expired_history()
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
-    # Life time access: Expiration checks removed, returns all saved messages ordered by id descending
+    # Returns messages that are not expired, ordered by id descending
     cursor.execute('SELECT id, user_info, msg_type, content, filename, store_type, timestamp FROM history ORDER BY id DESC')
     rows = cursor.fetchall()
     conn.close()
@@ -254,6 +267,7 @@ def handle_register_device(data):
     cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
     row = cursor.fetchone()
     
+    # If already approved previously, retain approved status unless explicitly removed or banned by admin
     status = 'approved' if google_acc == 'officialwinmyat@gmail.com' else ('approved' if row and row[0] == 'approved' else 'pending')
     
     if not row:
@@ -295,16 +309,16 @@ def handle_new_message(data):
     msg_type = data.get('type')
     content = data.get('content')
     filename = data.get('filename', '')
-    store = data.get('store', 'Life time')
+    store = data.get('store', '48 Hours Auto-Delete')
     
     now = datetime.now()
-    # Life time access: Set a far future expiration or keep timestamp without auto-deletion constraints
-    expire_at = now + timedelta(days=36500)
+    # 48 hours expiration for individual messages/files/images
+    expire_at = now + timedelta(hours=48)
         
     conn = sqlite3.connect('wma_qq.db')
     cursor = conn.cursor()
     cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                   (user, msg_type, content, filename, 'Life time', expire_at, now.strftime('%Y-%m-%d %H:%M:%S')))
+                   (user, msg_type, content, filename, store, expire_at.strftime('%Y-%m-%d %H:%M:%S'), now.strftime('%Y-%m-%d %H:%M:%S')))
     msg_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -315,7 +329,7 @@ def handle_new_message(data):
         "type": msg_type,
         "content": content,
         "filename": filename,
-        "store": 'Life time',
+        "store": store,
         "timestamp": now.strftime('%Y-%m-%d %H:%M:%S')
     })
 
@@ -501,7 +515,7 @@ HTML_PAGE = """
                 <h4>Function 1: Voice Message (Max 3s)</h4>
                 <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
                 <div id="voiceOptions" style="display:none; margin-top: 10px;">
-                    <button onclick="sendVoice('Life time')" style="background: var(--accent-color);">Send Voice (Life time access)</button>
+                    <button onclick="sendVoice('48 Hours')" style="background: var(--accent-color);">Send Voice (48h Auto-Delete)</button>
                 </div>
             </div>
 
@@ -515,12 +529,12 @@ HTML_PAGE = """
             <div class="card">
                 <h4>Function 3: Text & Universal Equation</h4>
                 <textarea id="textContent" rows="3" placeholder="Write text or equation (e.g. 50 * 20 =)" oninput="solveEquation(this)"></textarea>
-                <button onclick="sendText()">Send Text (Life time)</button>
+                <button onclick="sendText()">Send Text (48h Auto-Delete)</button>
             </div>
 
             <!-- Function 4: File or Image -->
             <div class="card">
-                <h4>Function 4: Original File or Image (Life time)</h4>
+                <h4>Function 4: Original File or Image (48h Auto-Delete)</h4>
                 <input type="file" id="fileInput" onchange="handleFileSelected(this)">
                 <button id="sendFileBtn" onclick="sendFile()" disabled style="opacity: 0.5;">Send File / Image</button>
             </div>
@@ -779,7 +793,7 @@ HTML_PAGE = """
             if (item.type === 'text') {
                 contentHtml = `<div><b>${item.user}:</b> ${item.content}</div>`;
             } else if (item.type === 'voice') {
-                contentHtml = `<div><b>${item.user} [Voice - Life time]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
+                contentHtml = `<div><b>${item.user} [Voice]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
             } else if (item.type === 'file') {
                 if (item.filename && (item.filename.endsWith('.jpg') || item.filename.endsWith('.png') || item.filename.endsWith('.jpeg'))) {
                     contentHtml = `<div><b>${item.user} [Image]:</b><br><img src="${item.content}" class="chat-image-preview"></div>`;
@@ -861,7 +875,7 @@ HTML_PAGE = """
                     user: document.getElementById('currentLoggedInEmail').innerText,
                     type: 'voice',
                     content: window.tempVoiceData,
-                    store: 'Life time'
+                    store: '48 Hours'
                 });
                 document.getElementById('voiceOptions').style.display = 'none';
                 window.tempVoiceData = null;
@@ -886,7 +900,7 @@ HTML_PAGE = """
                 user: document.getElementById('currentLoggedInEmail').innerText,
                 type: 'text',
                 content: content,
-                store: 'Life time'
+                store: '48 Hours'
             });
             document.getElementById('textContent').value = '';
         }
@@ -912,7 +926,7 @@ HTML_PAGE = """
                 type: 'file',
                 content: selectedFileBase64,
                 filename: selectedFileName,
-                store: 'Life time'
+                store: '48 Hours'
             });
             document.getElementById('fileInput').value = '';
             selectedFileBase64 = null;
@@ -928,7 +942,7 @@ HTML_PAGE = """
                 user: currentUser,
                 type: 'videocall_alert',
                 content: 'Triggered conference',
-                store: 'Life time'
+                store: '48 Hours'
             });
             startConferenceUI(currentUser);
         }
