@@ -276,9 +276,18 @@ def handle_delete_message(data):
         conn.close()
         socketio.emit('message_deleted', {"id": msg_id})
 
+# WebRTC & Video Conference Socket Events
 @socketio.on('trigger_video_call')
 def handle_video_call(data):
     socketio.emit('incoming_video_call', data)
+
+@socketio.on('join_conference')
+def handle_join_conference(data):
+    socketio.emit('user_joined_conference', data, room=request.sid)
+
+@socketio.on('leave_conference')
+def handle_leave_conference(data):
+    socketio.emit('user_left_conference', data)
 
 @socketio.on('video_signal')
 def handle_video_signal(data):
@@ -310,7 +319,7 @@ HTML_PAGE = """
             --accent-color: #ec4899;
             --chat-bg: rgba(10, 14, 23, 0.8);
             --stream-bg: rgba(20, 24, 33, 0.8);
-            --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80'); /* Chinese/Japanese anime immersive vibe */
+            --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80');
         }
         body { 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
@@ -336,9 +345,10 @@ HTML_PAGE = """
         
         #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none; }
         
-        #videoPopup { display: none; position: fixed; top: 10%; left: 15%; width: 70%; background: rgba(20, 24, 33, 0.98); border: 3px solid var(--accent-color); border-radius: 10px; padding: 20px; z-index: 1000; box-shadow: 0 0 35px rgba(236,72,153,0.5); text-align: center; backdrop-filter: blur(18px); }
+        #videoPopup { display: none; position: fixed; top: 10%; left: 10%; width: 80%; background: rgba(20, 24, 33, 0.98); border: 3px solid var(--accent-color); border-radius: 10px; padding: 20px; z-index: 1000; box-shadow: 0 0 35px rgba(236,72,153,0.5); text-align: center; backdrop-filter: blur(18px); }
         .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; max-height: 380px; overflow-y: auto; margin: 15px 0; }
-        .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 6px; padding: 5px; }
+        .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 6px; padding: 5px; position: relative; }
+        .video-label { position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #fff; padding: 2px 6px; font-size: 11px; border-radius: 4px; }
         video { width: 100%; height: 160px; object-fit: cover; border-radius: 4px; background: #000; }
 
         .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
@@ -389,8 +399,12 @@ HTML_PAGE = """
         <div id="videoPopup">
             <h3>WMA QQ - Anime Video Conference</h3>
             <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: #f472b6;"></div>
+            <div style="font-size: 13px; color: #facc15; margin-bottom: 8px;">Active Participants in Call: <span id="activeCallCount">1</span></div>
             <div class="video-grid" id="videoGridContainer">
-                <div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>
+                <div class="video-box" id="localVideoContainer">
+                    <video id="localVideo" autoplay muted playsinline></video>
+                    <div class="video-label">Local Stream (You)</div>
+                </div>
             </div>
             <div class="actions" style="margin-top: 15px; display: flex; justify-content: center; gap: 10px;">
                 <button onclick="stopConference()" style="background: #ca8a04; width: auto; padding: 8px 15px;">Stop Video Conference</button>
@@ -398,7 +412,7 @@ HTML_PAGE = """
             </div>
         </div>
 
-        <!-- Incoming Call Alert in Live Chat -->
+        <!-- Left Pane: Controls & Admin Panel -->
         <div class="left-pane">
             <h2>WMA QQ Anime Control Panel</h2>
             <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:#f472b6;"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
@@ -430,404 +444,469 @@ HTML_PAGE = """
 
             <!-- Function 2: Video Call -->
             <div class="card">
-                <h4>Function 2: Video Call (10s)</h4>
-                <button onclick="triggerVideoCall()" style="background: #16a34a;">Call All Active Users (10s)</button>
+                <h4>Function 2: Live Video Call & Conference</h4>
+                <p style="font-size: 12px; color: #cbd5e1;">လိုင်းပေါ်ရှိ အခြားသူများနှင့် Video Call ချိတ်ဆက်ရန် ခလုတ်ကိုနှိပ်ပါ။</p>
+                <button onclick="startVideoCall()" style="background: #2563eb;">Start / Accept Video Call</button>
             </div>
 
-            <!-- Function 3: Text & Universal Equation -->
+            <!-- Function 3: Text Message & Custom Notes -->
             <div class="card">
-                <h4>Function 3: Text & Universal Equation</h4>
-                <textarea id="textContent" rows="3" placeholder="Write text or equation (e.g. 50 * 20 =)" oninput="solveEquation(this)"></textarea>
-                <button onclick="sendText()">Send Text (48h)</button>
+                <h4>Function 3: Text & Note Broadcast</h4>
+                <textarea id="textContent" placeholder="Chinese/Japanese Anime quote သို့မဟုတ် မက်ဆေ့ဂျ်ရေးရန်..."></textarea>
+                <select id="textStore">
+                    <option value="48h">48 Hours Storage</option>
+                    <option value="1h">1 Hour Storage</option>
+                    <option value="5m">5 Minutes Storage</option>
+                </select>
+                <button onclick="sendText()">Send Broadcast Message</button>
             </div>
 
-            <!-- Function 4: File or Image -->
+            <!-- Function 4: Image/Photo Share -->
             <div class="card">
-                <h4>Function 4: Original File or Image (48h)</h4>
-                <input type="file" id="fileInput" onchange="handleFileSelected(this)">
-                <button id="sendFileBtn" onclick="sendFile()" disabled style="opacity: 0.5;">Send File / Image</button>
+                <h4>Function 4: Anime Photo Share</h4>
+                <input type="file" id="imageFileInput" accept="image/*" onchange="previewImage(event)">
+                <img id="imagePreviewContainer" class="chat-image-preview" style="display:none;">
+                <select id="imageStore">
+                    <option value="48h">48 Hours Storage</option>
+                    <option value="1h">1 Hour Storage</option>
+                    <option value="5m">5 Minutes Storage</option>
+                </select>
+                <button onclick="sendImage()">Upload & Share Photo</button>
             </div>
         </div>
 
-        <div class="right-pane" id="rightPane">
-            <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
-            <h3>WMA QQ - Live Chat & History Stream</h3>
+        <!-- Right Pane: Broadcast Chat History Stream -->
+        <div class="right-pane">
+            <button id="resetBtn" onclick="resetStorage()">Reset Storage (Admin)</button>
+            <h3>WMA QQ Live Broadcast Stream & Chat History</h3>
             <div id="historyStream"></div>
         </div>
     </div>
 
-<script>
-    const socket = io();
-    let mediaRecorder;
-    let audioChunks = [];
-    let localStream = null;
-    let peerConnections = {};
-    let selectedFileBase64 = null;
-    let selectedFileName = '';
-    let selectedFileType = '';
-
-    const animeThemes = [
-        { name: "Naruto Uzumaki", bg: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#f97316" },
-        { name: "Gojo Satoru", bg: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", accent: "#3b82f6" },
-        { name: "Wei Wuxian (MDZS)", bg: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", accent: "#a855f7" },
-        { name: "Nezuko Kamado", bg: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" }
-    ];
-
-    function autoGenerateAnimeTheme() {
-        const theme = animeThemes[Math.floor(Math.random() * animeThemes.length)];
-        document.documentElement.style.setProperty('--accent-color', theme.accent);
-        document.documentElement.style.setProperty('--bg-image', `url('${theme.bg}')`);
-        alert("Theme switched to anime style: " + theme.name);
-    }
-
-    function togglePasswordVisibility() {
-        const pwd = document.getElementById('loginPassword');
-        pwd.type = document.getElementById('showPasswordToggle').checked ? 'text' : 'password';
-    }
-
-    function getDeviceId() {
-        let devId = localStorage.getItem('wma_device_id');
-        if (!devId) {
-            devId = 'device_' + Math.random().toString(36).substring(2, 15);
-            localStorage.setItem('wma_device_id', devId);
+    <script>
+        const socket = io();
+        let deviceId = localStorage.getItem('wma_device_id');
+        if (!deviceId) {
+            deviceId = 'dev_' + Math.random().toString(36.2, 16).substring(2, 10);
+            localStorage.setItem('wma_device_id', deviceId);
         }
-        return devId;
-    }
 
-    // Check Session on Load
-    fetch('/check_session')
-    .then(res => res.json())
-    .then(data => {
-        if (data.logged_in) {
-            document.getElementById('authOverlay').style.display = 'none';
-            document.getElementById('appContainer').style.display = 'flex';
-            document.getElementById('currentLoggedInEmail').innerText = data.email;
-            if (data.is_admin) {
-                document.getElementById('adminControlCard').style.display = 'block';
-                document.getElementById('resetBtn').style.display = 'block';
-            }
-            registerDeviceWithServer(data.email);
-        } else {
-            document.getElementById('authOverlay').style.display = 'flex';
+        let currentUserEmail = '';
+        let localStream = null;
+        let peerConnections = {};
+        let rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        let mediaRecorder;
+        let audioChunks = [];
+        let selectedBase64Image = null;
+
+        window.onload = function() {
+            checkSession();
+            loadHistory();
+        };
+
+        function togglePasswordVisibility() {
+            const pwd = document.getElementById('loginPassword');
+            pwd.type = document.getElementById('showPasswordToggle').checked ? 'text' : 'password';
         }
-    });
 
-    function loginUser() {
-        const email = document.getElementById('loginEmail').value;
-        const password = document.getElementById('loginPassword').value;
-        fetch('/login', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({email, password})
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                location.reload();
-            } else {
-                document.getElementById('loginError').innerText = data.error;
-            }
-        });
-    }
-
-    function signupUser() {
-        const email = document.getElementById('loginEmail').value;
-        const password = document.getElementById('loginPassword').value;
-        fetch('/signup', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({email, password})
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                location.reload();
-            } else {
-                document.getElementById('loginError').innerText = data.error;
-            }
-        });
-    }
-
-    function logoutUser() {
-        fetch('/logout', {method: 'POST'}).then(() => location.reload());
-    }
-
-    function registerDeviceWithServer(email) {
-        const devId = getDeviceId();
-        socket.emit('register_device', {device_id: devId, google_account: email});
-        fetchDevices();
-    }
-
-    socket.on('device_status_update', () => {
-        fetchDevices();
-    });
-
-    function fetchDevices() {
-        fetch('/get_devices')
-        .then(res => res.json())
-        .then(devices => {
-            const devId = getDeviceId();
-            let currentDev = devices.find(d => d.device_id === devId);
-            
-            if (currentDev) {
-                if (currentDev.status === 'pending' && currentDev.account !== 'officialwinmyat@gmail.com') {
-                    document.getElementById('pendingOverlay').style.display = 'flex';
-                    document.getElementById('overlayDeviceId').value = devId;
-                    document.getElementById('overlayStatus').innerText = "Status: Pending Approval ⏳";
-                } else if (currentDev.status === 'banned') {
-                    document.getElementById('pendingOverlay').style.display = 'flex';
-                    document.getElementById('overlayDeviceId').value = devId;
-                    document.getElementById('overlayStatus').innerText = "Status: Banned ❌";
+        function checkSession() {
+            fetch('/check_session')
+            .then(res => res.json())
+            .then(data => {
+                if (data.logged_in) {
+                    currentUserEmail = data.email;
+                    document.getElementById('currentLoggedInEmailinnerText') = currentUserEmail;
+                    document.getElementById('currentLoggedInEmail').textContent = currentUserEmail;
+                    document.getElementById('authOverlay').style.display = 'none';
+                    socket.emit('register_device', { device_id: deviceId, google_account: currentUserEmail });
+                    checkDeviceApprovalStatus();
                 } else {
-                    document.getElementById('pendingOverlay').style.display = 'none';
+                    document.getElementById('authOverlay').style.display = 'flex';
                 }
-            }
-
-            const listContainer = document.getElementById('activeDeviceList');
-            if (listContainer) {
-                listContainer.innerHTML = '';
-                devices.forEach(d => {
-                    let row = document.createElement('div');
-                    row.className = 'device-row';
-                    row.innerHTML = `<span><b>${d.device_id}</b> (${d.account}) [${d.status}]</span>
-                                   <div>
-                                      <button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 6px; font-size:10px; background:#16a34a; width:auto;">Approve</button>
-                                      <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 6px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
-                                      <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 6px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
-                                   </div>`;
-                    listContainer.appendChild(row);
-                });
-            }
-        });
-    }
-
-    function adminAction(devId, action) {
-        socket.emit('admin_device_action', {device_id: devId, action: action});
-    }
-
-    // Load History on Start
-    fetch('/get_history')
-    .then(res => res.json())
-    .then(data => {
-        const stream = document.getElementById('historyStream');
-        stream.innerHTML = '';
-        data.reverse().forEach(item => appendMessageToStream(item));
-    });
-
-    socket.on('broadcast_message', data => {
-        appendMessageToStream(data);
-    });
-
-    socket.on('message_deleted', data => {
-        const el = document.getElementById('msg-box-' + data.id);
-        if (el) el.remove();
-    });
-
-    function appendMessageToStream(item) {
-        const stream = document.getElementById('historyStream');
-        const div = document.createElement('div');
-        div.className = 'history-item';
-        div.id = 'msg-box-' + item.id;
-        
-        let contentHtml = '';
-        if (item.type === 'text') {
-            contentHtml = `<div><b>${item.user}:</b> ${item.content}</div>`;
-        } else if (item.type === 'voice') {
-            contentHtml = `<div><b>${item.user} [Voice - ${item.store}]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
-        } else if (item.type === 'file') {
-            if (item.filename && (item.filename.endsWith('.jpg') || item.filename.endsWith('.png') || item.filename.endsWith('.jpeg'))) {
-                contentHtml = `<div><b>${item.user} [Image]:</b><br><img src="${item.content}" class="chat-image-preview"></div>`;
-            } else {
-                contentHtml = `<div><b>${item.user} [File]:</b> <a href="${item.content}" download="${item.filename}" style="color:#f472b6;">${item.filename}</a></div>`;
-            }
-        } else if (item.type === 'videocall_alert') {
-            contentHtml = `<div><b>🚨 Anime Video Call Alert:</b> ${item.user} has triggered a video conference!</div>`;
+            });
         }
 
-        let actionButtons = '';
-        if (item.type === 'text') {
-            actionButtons = `<div class="msg-actions">
-                <button onclick="copyTextContent('${encodeURIComponent(item.content)}')">Copy</button>
-                <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button>
-            </div>`;
-        } else if (item.type === 'voice' || item.type === 'file') {
-            actionButtons = `<div class="msg-actions">
-                <button onclick="saveToDevice('${item.content}', '${item.filename || 'media_file'}')">Save to Device</button>
-                <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button>
-            </div>`;
+        function signupUser() {
+            const email = document.getElementById('loginEmail').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            fetch('/signup', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ email, password })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    document.getElementById('loginError').textContent = data.error;
+                }
+            });
         }
 
-        div.innerHTML = contentHtml + actionButtons + `<div style="font-size:10px; color:#94a3b8; margin-top:4px;">${item.timestamp}</div>`;
-        stream.appendChild(div);
-        stream.scrollTop = stream.scrollHeight;
-    }
+        function loginUser() {
+            const email = document.getElementById('loginEmail').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            fetch('/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ email, password })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    document.getElementById('loginError').textContent = data.error;
+                }
+            });
+        }
 
-    function copyTextContent(encodedText) {
-        const text = decodeURIComponent(encodedText);
-        navigator.clipboard.writeText(text).then(() => alert("Copied to clipboard!"));
-    }
+        function logoutUser() {
+            fetch('/logout', {method: 'POST'}).then(() => location.reload());
+        }
 
-    function saveToDevice(dataUrl, filename) {
-        const a = document.createElement('a');
-        a.href = dataUrl;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-    }
-
-    function deleteMessageItem(id) {
-        socket.emit('delete_message_item', {id: id});
-    }
-
-    // Voice Recording
-    function toggleRecordVoice() {
-        const btn = document.getElementById('recBtn');
-        const options = document.getElementById('voiceOptions');
-        if (btn.innerText.includes("Record")) {
-            audioChunks = [];
-            navigator.mediaDevices.getUserMedia({audio: true}).then(stream => {
-                mediaRecorder = new MediaRecorder(stream);
-                mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-                mediaRecorder.onstop = () => {
-                    const audioBlob = new Blob(audioChunks, {type: 'audio/mp3'});
-                    const reader = new FileReader();
-                    reader.onloadend = () => {
-                        window.tempVoiceData = reader.result;
-                        options.style.display = 'block';
-                    };
-                    reader.readAsDataURL(audioBlob);
-                };
-                mediaRecorder.start();
-                btn.innerText = "Stop Recording (Saving...)";
-                setTimeout(() => {
-                    if (mediaRecorder && mediaRecorder.state === 'recording') {
-                        mediaRecorder.stop();
-                        btn.innerText = "Record Voice (3s)";
+        function checkDeviceApprovalStatus() {
+            fetch('/get_devices')
+            .then(res => res.json())
+            .then(devices => {
+                const myDev = devices.find(d => d.device_id === deviceId);
+                const isAdmin = currentUserEmail === 'officialwinmyat@gmail.com';
+                
+                if (myDev && (myDev.status === 'approved' || isAdmin)) {
+                    document.getElementById('pendingOverlay').style.display = 'none';
+                    document.getElementById('appContainer').style.display = 'flex';
+                    if (isAdmin) {
+                        document.getElementById('adminControlCard').style.display = 'block';
+                        document.getElementById('resetBtn').style.display = 'block';
+                        renderAdminDevices(devices);
                     }
-                }, 3000);
+                } else if (myDev && myDev.status === 'banned') {
+                    document.getElementById('overlayTitle').textContent = 'Access Denied / Banned';
+                    document.getElementById('overlayDesc').textContent = 'သင့် Device အား Admin မှ ပိတ်ပင်ထားပါသည် (Banned)။';
+                    document.getElementById('overlayStatus').textContent = 'Status: Banned ❌';
+                    document.getElementById('overlayStatus').style.color = '#f87171';
+                    document.getElementById('overlayDeviceId').value = deviceId;
+                    document.getElementById('pendingOverlay').style.display = 'flex';
+                } else {
+                    document.getElementById('overlayDeviceId').value = deviceId;
+                    document.getElementById('pendingOverlay').style.display = 'flex';
+                }
             });
         }
-    }
 
-    function sendVoice(storeType) {
-        if (window.tempVoiceData) {
-            socket.emit('new_message', {
-                user: document.getElementById('currentLoggedInEmail').innerText,
-                type: 'voice',
-                content: window.tempVoiceData,
-                store: storeType
+        function renderAdminDevices(devices) {
+            let html = '';
+            devices.forEach(d => {
+                html += `<div class="device-row">
+                    <span><b>${d.device_id}</b> (${d.account})<br><small style="color:#cbd5e1;">Status: ${d.status}</small></span>
+                    <span>
+                        ${d.status !== 'approved' ? `<button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 6px; font-size:10px; background:#22c55e; width:auto;">Approve</button>` : ''}
+                        ${d.status !== 'banned' ? `<button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 6px; font-size:10px; background:#eab308; width:auto;">Ban</button>` : ''}
+                        <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 6px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
+                    </span>
+                </div>`;
             });
-            document.getElementById('voiceOptions').style.display = 'none';
-            window.tempVoiceData = null;
+            document.getElementById('activeDeviceList').innerHTML = html || 'No devices registered.';
         }
-    }
 
-    // Text & Equation
-    function solveEquation(textarea) {
-        let val = textarea.value.trim();
-        if (val.endsWith('=')) {
-            try {
-                let expr = val.slice(0, -1);
-                let result = eval(expr);
-                textarea.value = val + ' ' + result;
-            } catch(e) {}
+        function adminAction(devId, action) {
+            socket.emit('admin_device_action', { device_id: devId, action: action });
         }
-    }
 
-    function sendText() {
-        const content = document.getElementById('textContent').value;
-        if (!content) return;
-        socket.emit('new_message', {
-            user: document.getElementById('currentLoggedInEmail').innerText,
-            type: 'text',
-            content: content,
-            store: '48h'
+        socket.on('device_status_update', (data) => {
+            checkDeviceApprovalStatus();
         });
-        document.getElementById('textContent').value = '';
-    }
 
-    // File Handling with immediate validation fix
-    function handleFileSelected(input) {
-        if (input.files && input.files[0]) {
-            const file = input.files[0];
-            selectedFileName = file.name;
-            selectedFileType = file.type;
+        // Chat History & Broadcast Functions
+        function loadHistory() {
+            fetch('/get_history')
+            .then(res => res.json())
+            .then(history => {
+                const stream = document.getElementById('historyStream');
+                stream.innerHTML = '';
+                history.forEach(item => appendHistoryItem(item));
+            });
+        }
+
+        function appendHistoryItem(item) {
+            const stream = document.getElementById('historyStream');
+            const div = document.createElement('div');
+            div.className = 'history-item';
+            div.id = `msg_${item.id}`;
+            
+            let contentHtml = '';
+            if (item.type === 'text') {
+                contentHtml = `<div>${escapeHtml(item.content)}</div>`;
+            } else if (item.type === 'voice') {
+                contentHtml = `<audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio>`;
+            } else if (item.type === 'image') {
+                contentHtml = `<img src="${item.content}" class="chat-image-preview">`;
+            }
+
+            const isAdmin = currentUserEmail === 'officialwinmyat@gmail.com';
+            div.innerHTML = `
+                <div style="font-size:11px; color:#f472b6; margin-bottom:3px;"><b>${escapeHtml(item.user)}</b> (${item.store} storage) - <span style="color:#94a3b8;">${item.timestamp}</span></div>
+                ${contentHtml}
+                ${isAdmin ? `<div class="msg-actions"><button onclick="deleteMessage(${item.id})" style="background:#dc2626;">Delete</button></div>` : ''}
+            `;
+            stream.appendChild(div);
+        }
+
+        socket.on('broadcast_message', (item) => {
+            appendHistoryItem(item);
+        });
+
+        socket.on('message_deleted', (data) => {
+            const el = document.getElementById(`msg_${data.id}`);
+            if (el) el.remove();
+        });
+
+        socket.on('storage_reset', () => {
+            document.getElementById('historyStream').innerHTML = '';
+            alert('Storage has been reset by Admin.');
+        });
+
+        function sendText() {
+            const text = document.getElementById('textContent').value.trim();
+            const store = document.getElementById('textStore').value;
+            if (!text) return;
+            socket.emit('new_message', {
+                user: currentUserEmail || deviceId,
+                type: 'text',
+                content: text,
+                store: store
+            });
+            document.getElementById('textContent').value = '';
+        }
+
+        function previewImage(event) {
+            const file = event.target.files[0];
+            if (!file) return;
             const reader = new FileReader();
             reader.onload = function(e) {
-                selectedFileBase64 = e.target.result;
-                document.getElementById('sendFileBtn').disabled = false;
-                document.getElementById('sendFileBtn').style.opacity = '1';
+                selectedBase64Image = e.target.result;
+                const img = document.getElementById('imagePreviewContainer');
+                img.src = selectedBase64Image;
+                img.style.display = 'block';
             };
             reader.readAsDataURL(file);
         }
-    }
 
-    function sendFile() {
-        if (!selectedFileBase64) return;
-        socket.emit('new_message', {
-            user: document.getElementById('currentLoggedInEmail').innerText,
-            type: 'file',
-            content: selectedFileBase64,
-            filename: selectedFileName,
-            store: '48h'
+        function sendImage() {
+            if (!selectedBase64Image) return;
+            const store = document.getElementById('imageStore').value;
+            socket.emit('new_message', {
+                user: currentUserEmail || deviceId,
+                type: 'image',
+                content: selectedBase64Image,
+                store: store
+            });
+            selectedBase64Image = null;
+            document.getElementById('imageFileinput') = '';
+            document.getElementById('imagePreviewContainer').style.display = 'none';
+        }
+
+        let isRecording = false;
+        function toggleRecordVoice() {
+            if (!isRecording) {
+                navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+                    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                    mediaRecorder.onstop = () => {
+                        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            window.tempVoiceBase64 = e.target.result;
+                            document.getElementById('voiceOptions').style.display = 'block';
+                        };
+                        reader.readAsDataURL(blob);
+                    };
+                    mediaRecorder.start();
+                    isRecording = true;
+                    document.getElementById('recBtn').textContent = 'Stop & Save Voice (Max 3s)';
+                    setTimeout(() => {
+                        if (isRecording) toggleRecordVoice();
+                    }, 3000);
+                }).catch(err => alert('Microphone permission error: ' + err));
+            } else {
+                mediaRecorder.stop();
+                isRecording = false;
+                document.getElementById('recBtn').textContent = 'Record Voice (3s)';
+            }
+        }
+
+        function sendVoice(store) {
+            if (!window.tempVoiceBase64) return;
+            socket.emit('new_message', {
+                user: currentUserEmail || deviceId,
+                type: 'voice',
+                content: window.tempVoiceBase64,
+                store: store
+            });
+            window.tempVoiceBase64 = null;
+            document.getElementById('voiceOptions').style.display = 'none';
+        }
+
+        function resetStorage() {
+            if (confirm('Are you sure you want to reset all broadcast history?')) {
+                socket.emit('reset_storage');
+            }
+        }
+
+        function autoGenerateAnimeTheme() {
+            const characters = [
+                "Naruto Uzumaki - Hidden Leaf Village (Hokage Vibe)",
+                "Gojo Satoru - Jujutsu Kaisen (Infinity Domain)",
+                "Tanjiro Kamado - Demon Slayer (Hinokami Kagura)",
+                "Luffy - One Piece (Gear 5 Sun God Nika)",
+                "Nezuko Kamado - Demon Slayer Spacial Vibe",
+                "Megumi Fushiguro - Shadow Divine Dogs"
+            ];
+            const chosen = characters[Math.floor(Math.random() * characters.length)];
+            document.getElementById('textContent').value = `✨ WMA QQ Anime Theme Selected: ${chosen} 🌸`;
+        }
+
+        function escapeHtml(text) {
+            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        // --- Multi-User WebRTC Video Call & Conference Implementation ---
+        let activeParticipantsCount = 1;
+
+        function startVideoCall() {
+            document.getElementById('videoPopup').style.display = 'block';
+            document.getElementById('callerInfo').textContent = `Connected as: ${currentUserEmail || deviceId}`;
+            
+            navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+            .then(stream => {
+                localStream = stream;
+                document.getElementById('localVideo').srcObject = stream;
+                socket.emit('join_conference', { sender: deviceId, email: currentUserEmail });
+            })
+            .catch(err => alert('Camera/Microphone permission denied or error: ' + err));
+        }
+
+        socket.on('incoming_video_call', (data) => {
+            // Auto open conference popup when a video call is triggered/accepted
+            if (document.getElementById('videoPopup').style.display !== 'block') {
+                startVideoCall();
+            }
         });
-        document.getElementById('fileInput').value = '';
-        selectedFileBase64 = null;
-        document.getElementById('sendFileBtn').disabled = true;
-        document.getElementById('sendFileBtn').style.opacity = '0.5';
-    }
 
-    // Video Call & Conference handling
-    function triggerVideoCall() {
-        socket.emit('trigger_video_call', {user: document.getElementById('currentLoggedInEmail').innerText});
-        socket.emit('new_message', {
-            user: document.getElementById('currentLoggedInEmail').innerText,
-            type: 'videocall_alert',
-            content: 'Triggered conference',
-            store: '5m'
+        socket.on('user_joined_conference', (data) => {
+            if (data.sender === deviceId) return;
+            createPeerConnection(data.sender, true);
         });
-        startConferenceUI(true);
-    }
 
-    socket.on('incoming_video_call', data => {
-        // Show popup with Accept/Decline options in chat or prompt
-        if (confirm(`Incoming Anime Video Call from ${data.user}. Accept?`)) {
-            startConferenceUI(false);
+        socket.on('user_left_conference', (data) => {
+            if (peerConnections[data.sender]) {
+                peerConnections[data.sender].close();
+                delete peerConnections[data.sender];
+            }
+            const box = document.getElementById(`remote_box_${data.sender}`);
+            if (box) box.remove();
+            updateParticipantCount(-1);
+        });
+
+        socket.on('video_signal_relay', async (data) => {
+            if (data.target !== deviceId) return;
+            const sender = data.sender;
+            
+            let pc = peerConnections[sender];
+            if (!pc) {
+                pc = createPeerConnection(sender, false);
+            }
+
+            if (data.signal.type === 'offer') {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                socket.emit('video_signal', { sender: deviceId, target: sender, signal: pc.localDescription });
+            } else if (data.signal.type === 'answer') {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
+            } else if (data.signal.candidate) {
+                await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
+            }
+        });
+
+        function createPeerConnection(remoteId, isInitiator) {
+            if (peerConnections[remoteId]) return peerConnections[remoteId];
+
+            const pc = new RTCPeerConnection(rtcConfig);
+            peerConnections[remoteId] = pc;
+
+            if (localStream) {
+                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            }
+
+            pc.onicecandidate = event => {
+                if (event.candidate) {
+                    socket.emit('video_signal', { sender: deviceId, target: remoteId, signal: { candidate: event.candidate } });
+                }
+            };
+
+            pc.ontrack = event => {
+                let remoteVideoBox = document.getElementById(`remote_box_${remoteId}`);
+                if (!remoteVideoBox) {
+                    remoteVideoBox = document.createElement('div');
+                    remoteVideoBox.className = 'video-box';
+                    remoteVideoBox.id = `remote_box_${remoteId}`;
+                    remoteVideoBox.innerHTML = `
+                        <video autoplay playsinline></video>
+                        <div class="video-label">Participant: ${remoteId.substring(0,6)}</div>
+                    `;
+                    document.getElementById('videoGridContainer').appendChild(remoteVideoBox);
+                    updateParticipantCount(1);
+                }
+                remoteVideoBox.querySelector('video').srcObject = event.streams[0];
+            };
+
+            if (isInitiator) {
+                pc.createOffer().then(offer => {
+                    pc.setLocalDescription(offer);
+                    socket.emit('video_signal', { sender: deviceId, target: remoteId, signal: offer });
+                });
+            }
+
+            return pc;
         }
-    });
 
-    function startConferenceUI(isInitiator) {
-        document.getElementById('videoPopup').style.display = 'block';
-        navigator.mediaDevices.getUserMedia({video: true, audio: true})
-        .then(stream => {
-            localStream = stream;
-            document.getElementById('localVideo').srcObject = stream;
-        }).catch(err => alert("Camera permission error: " + err));
-    }
-
-    function stopConference() {
-        if (localStream) {
-            localStream.getTracks().forEach(track => track.stop());
+        function updateParticipantCount(change) {
+            activeParticipantsCount += change;
+            if (activeParticipantsCount < 1) activeParticipantsCount = 1;
+            document.getElementById('activeCallCount').textContent = activeParticipantsCount;
         }
-        closePopup();
-    }
 
-    function closePopup() {
-        document.getElementById('videoPopup').style.display = 'none';
-    }
-
-    function resetStorage() {
-        if (confirm("Are you sure you want to reset all storage?")) {
-            socket.emit('reset_storage');
+        function stopConference() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            Object.keys(peerConnections).forEach(id => {
+                peerConnections[id].close();
+            });
+            peerConnections = {};
+            
+            // Clear remote video boxes
+            const grid = document.getElementById('videoGridContainer');
+            grid.innerHTML = `
+                <div class="video-box" id="localVideoContainer">
+                    <video id="localVideo" autoplay muted playsinline></video>
+                    <div class="video-label">Local Stream (You)</div>
+                </div>
+            `;
+            activeParticipantsCount = 1;
+            document.getElementById('activeCallCount').textContent = 1;
+            socket.emit('leave_conference', { sender: deviceId });
+            document.getElementById('videoPopup').style.display = 'none';
         }
-    }
 
-    socket.on('storage_reset', () => {
-        document.getElementById('historyStream').innerHTML = '';
-        alert("Storage has been reset.");
-    });
-</script>
+        function closePopup() {
+            stopConference();
+        }
+    </script>
 </body>
 </html>
 """
