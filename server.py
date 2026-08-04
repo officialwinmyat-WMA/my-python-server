@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import smtplib
+import random
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template_string, session, send_file
@@ -51,7 +52,9 @@ def init_db():
             email TEXT UNIQUE,
             password TEXT,
             device_id TEXT,
-            remember_token TEXT
+            remember_token TEXT,
+            verification_code TEXT,
+            is_verified INTEGER DEFAULT 0
         )
     ''')
     conn.commit()
@@ -69,6 +72,27 @@ def clean_expired_history():
         conn.close()
     except Exception as e:
         print("Cleanup error:", e)
+
+def send_verification_email(recipient_email, code):
+    try:
+        sender_email = os.environ.get("SMTP_EMAIL", "officialwinmyat@gmail.com")
+        sender_password = os.environ.get("SMTP_PASSWORD", "")
+        if not sender_password:
+            return False
+        msg = MIMEText(f"Your WMA QQ Verification Code is: {code}\n\nPlease enter this 6-digit code to complete your registration.")
+        msg['Subject'] = f"WMA QQ - Verification Code: {code}"
+        msg['From'] = sender_email
+        msg['To'] = recipient_email
+        
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.sendmail(sender_email, [recipient_email], msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        print("Email sending error:", e)
+        return False
 
 def send_approval_email(device_id, google_account):
     try:
@@ -93,6 +117,10 @@ def send_approval_email(device_id, google_account):
 def index():
     return render_template_string(HTML_PAGE)
 
+@app.route('/ping')
+def ping():
+    return "OK", 200
+
 @app.route('/manifest.json')
 def serve_manifest():
     return send_file('manifest.json', mimetype='application/manifest+json')
@@ -111,20 +139,58 @@ def signup():
     if not email or not password:
         return jsonify({"success": False, "error": "Email နှင့် Password ထည့်ရန် လိုအပ်ပါသည်။"})
     
+    code = f"{random.randint(100000, 999999)}"
+    
     try:
         conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
-        cursor.execute('INSERT INTO users (email, password, device_id) VALUES (?, ?, ?)', (email, password, device_id))
+        cursor.execute('SELECT id, is_verified FROM users WHERE email = ?', (email,))
+        existing = cursor.fetchone()
+        
+        if existing:
+            if existing[1] == 1:
+                conn.close()
+                return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်ရှိပြီးသား ဖြစ်ပါသည်။ Login ဝင်ပါ။"})
+            else:
+                cursor.execute('UPDATE users SET password = ?, device_id = ?, verification_code = ? WHERE email = ?', (password, device_id, code, email))
+        else:
+            cursor.execute('INSERT INTO users (email, password, device_id, verification_code, is_verified) VALUES (?, ?, ?, ?, 0)', (email, password, device_id, code))
+        
+        conn.commit()
+        conn.close()
+        
+        sent = send_verification_email(email, code)
+        if not sent and email != 'officialwinmyat@gmail.com':
+            return jsonify({"success": False, "error": "Verification Email ပို့၍ မရပါ။ SMTP သို့မဟုတ် Email ကို စစ်ဆေးပါ။"})
+            
+        return jsonify({"success": True, "requires_verification": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+@app.route('/verify_code', methods=['POST'])
+def verify_code():
+    data = request.json
+    email = data.get('email', '').strip().lower()
+    code = data.get('code', '').strip()
+    device_id = data.get('device_id', '')
+    
+    conn = sqlite3.connect('wma_qq_private.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT verification_code FROM users WHERE email = ?', (email,))
+    row = cursor.fetchone()
+    
+    if row and row[0] == code:
+        cursor.execute('UPDATE users SET is_verified = 1, verification_code = NULL WHERE email = ?', (email,))
         conn.commit()
         conn.close()
         
         session['user_email'] = email
-        session['is_admin'] = (email == 'officialwinmyat@gmail.com')
-        return jsonify({"success": True, "is_admin": session['is_admin']})
-    except sqlite3.IntegrityError:
-        return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်ရှိနှင့်ပြီးသား ဖြစ်ပါသည်။ Login ဝင်ပါ။"})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
+        is_admin = (email == 'officialwinmyat@gmail.com')
+        session['is_admin'] = is_admin
+        return jsonify({"success": True, "is_admin": is_admin})
+    else:
+        conn.close()
+        return jsonify({"success": False, "error": "Verification Code မှားယွင်းနေပါသည်။"})
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -136,23 +202,34 @@ def login():
     
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT password FROM users WHERE email = ?', (email,))
+    cursor.execute('SELECT password, is_verified FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
     
-    if row and row[0] == password:
-        session['user_email'] = email
-        session['is_admin'] = (email == 'officialwinmyat@gmail.com')
-        
-        if remember:
-            token = f"token_{email}_{device_id}"
-            cursor.execute('UPDATE users SET remember_token = ?, device_id = ? WHERE email = ?', (token, device_id, email))
-            conn.commit()
-        
-        conn.close()
-        return jsonify({"success": True, "is_admin": session['is_admin'], "remember_token": f"token_{email}_{device_id}" if remember else ""})
+    if row:
+        stored_password, is_verified = row
+        if is_verified == 0:
+            conn.close()
+            return jsonify({"success": False, "error": "အကောင့်ကို Code ဖြင့် အတည်ပြုပြီးသား မရှိသေးပါ။"})
+            
+        if stored_password == password:
+            session['user_email'] = email
+            is_admin = (email == 'officialwinmyat@gmail.com')
+            session['is_admin'] = is_admin
+            
+            token = ""
+            if remember:
+                token = f"token_{email}_{device_id}"
+                cursor.execute('UPDATE users SET remember_token = ?, device_id = ? WHERE email = ?', (token, device_id, email))
+                conn.commit()
+            
+            conn.close()
+            return jsonify({"success": True, "is_admin": is_admin, "remember_token": token})
+        else:
+            conn.close()
+            return jsonify({"success": False, "error": "Password မှားယွင်းနေပါသည်။"})
     else:
         conn.close()
-        return jsonify({"success": False, "error": "Email သို့မဟုတ် Password မှားယွင်းနေပါသည်။"})
+        return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်မရှိပါ။"})
 
 @app.route('/check_remember', methods=['POST'])
 def check_remember():
@@ -398,6 +475,7 @@ HTML_PAGE = """
             --chat-bg: rgba(10, 14, 23, 0.85);
             --stream-bg: rgba(20, 24, 33, 0.85);
             --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80');
+            --char-fg-image: none;
         }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -407,16 +485,32 @@ HTML_PAGE = """
             background-size: cover; background-position: center; background-attachment: fixed;
             color: var(--text-color);
             display: flex; height: 100vh; overflow: hidden;
+            position: relative;
+        }
+        /* Character Foreground Watermark Overlay */
+        body::before {
+            content: "";
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background-image: var(--char-fg-image);
+            background-size: cover; background-position: center;
+            opacity: 0.15;
+            pointer-events: none;
+            z-index: 1;
+        }
+        .left-pane, .right-pane {
+            position: relative;
+            z-index: 2;
         }
         .left-pane {
             width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box;
             background: var(--panel-bg); border-right: 3px solid var(--accent-color);
-            position: relative; backdrop-filter: blur(12px);
+            backdrop-filter: blur(12px);
             transition: all 0.3s ease;
         }
         .right-pane {
             width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box;
-            background: var(--stream-bg); position: relative; backdrop-filter: blur(12px);
+            background: var(--stream-bg); backdrop-filter: blur(12px);
             border-left: 3px solid var(--accent-color);
             transition: all 0.3s ease;
         }
@@ -452,8 +546,8 @@ HTML_PAGE = """
         .msg-actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
         .msg-actions button { padding: 4px 10px; font-size: 11px; width: auto; margin: 0; border-radius: 4px; background: var(--accent-color); border: 1px solid #fff; }
         
-        .user-email-tag { color: var(--accent-color); cursor: pointer; text-decoration: underline; font-weight: bold; position: relative; display: inline-block; }
-        .user-email-tag:hover { color: #fff; }
+        .user-name-tag { color: var(--accent-color); cursor: pointer; text-decoration: underline; font-weight: bold; position: relative; display: inline-block; }
+        .user-name-tag:hover { color: #fff; }
         
         /* Online Status Green Indicator Dot */
         .online-dot {
@@ -502,54 +596,26 @@ HTML_PAGE = """
         video { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; background: #000; }
         .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
         #appContainer { display: none; width: 100%; height: 100vh; }
-        #authOverlay, #pendingOverlay {
+        #authOverlay, #pendingOverlay, #verifyOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100vh;
             background: rgba(10, 14, 23, 0.96); z-index: 9999; display: flex; flex-direction: column;
             justify-content: center; align-items: center; text-align: center; padding: 20px;
         }
-        #pendingOverlay { display: none; }
+        #pendingOverlay, #verifyOverlay { display: none; }
         .chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 2px solid var(--accent-color); display: block; }
 
-        /* Phone Screen View Layout Adaptation */
         @media (max-width: 768px) {
             body { flex-direction: column; height: 100vh; overflow: hidden; }
             #appContainer { display: flex; flex-direction: column; height: 100vh; width: 100%; }
-            
-            /* Top section: Chat Room View */
             .right-pane {
-                order: 1;
-                width: 100%;
-                height: 52vh;
-                min-height: 52vh;
-                max-height: 52vh;
-                border: none;
-                border-bottom: 3px solid var(--accent-color);
-                display: flex;
-                flex-direction: column;
-                padding: 10px;
-                box-sizing: border-box;
-                overflow: hidden;
+                order: 1; width: 100%; height: 52vh; min-height: 52vh; max-height: 52vh;
+                border: none; border-bottom: 3px solid var(--accent-color);
+                display: flex; flex-direction: column; padding: 10px; box-sizing: border-box; overflow: hidden;
             }
-            #historyStream {
-                flex: 1;
-                overflow-y: auto;
-                -webkit-overflow-scrolling: touch;
-                margin-top: 5px;
-                margin-bottom: 5px;
-            }
-            
-            /* Bottom section: Control Buttons & Inputs */
+            #historyStream { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; margin-top: 5px; margin-bottom: 5px; }
             .left-pane {
-                order: 2;
-                width: 100%;
-                height: 48vh;
-                min-height: 48vh;
-                max-height: 48vh;
-                border: none;
-                overflow-y: auto;
-                -webkit-overflow-scrolling: touch;
-                padding: 10px;
-                box-sizing: border-box;
+                order: 2; width: 100%; height: 48vh; min-height: 48vh; max-height: 48vh;
+                border: none; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px; box-sizing: border-box;
             }
             #videoPopup { width: 90%; left: 5%; top: 5%; }
         }
@@ -572,6 +638,16 @@ HTML_PAGE = """
             <button onclick="signupUser()" style="background: #3b82f6; margin-top: 5px;">Sign Up</button>
             <button onclick="openForgetPassword()" style="background: #ca8a04; margin-top: 5px; font-size: 12px;">Forget Password?</button>
             <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
+        </div>
+    </div>
+
+    <div id="verifyOverlay">
+        <h2 style="color: var(--accent-color);">Email Verification Required</h2>
+        <p style="max-width: 400px; color: #cbd5e1; margin: 15px 0;">သင့် Email ထံသို့ ပို့လိုက်သော ဂဏန်း ၆ လုံးပါ Verification Code ကို ထည့်ပါ</p>
+        <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px;">
+            <input type="text" id="verificationCodeInput" placeholder="6-digit code" maxlength="6" style="text-align:center; font-size:18px; letter-spacing:4px; font-weight:bold;">
+            <button onclick="submitVerificationCode()" style="background: var(--accent-color); margin-top: 10px;">Verify Code</button>
+            <div id="verifyError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
     </div>
 
@@ -600,19 +676,15 @@ HTML_PAGE = """
             </div>
         </div>
 
-        <!-- Right Pane (Chat Room Area) placed first for mobile top placement -->
         <div class="right-pane" id="rightPane">
-            <!-- Top-Left Notification Banner -->
             <div id="topNotificationBanner"></div>
             <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
             
-            <!-- Chat Room Title & Go to Main Chat Room Button -->
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
                 <h3 id="currentChatRoomTitle" style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color); margin: 0 0 10px 0;">WMA QQ - Main Group Chat</h3>
                 <button id="goToMainChatBtn" onclick="switchToMainChat()">Go to Main Chat Room</button>
             </div>
 
-            <!-- Top-Left Private Chat List Quick Switcher -->
             <div style="margin-bottom: 8px;">
                 <select id="privateChatSwitcher" onchange="switchPrivateChatFromDropdown(this)" style="padding: 6px; font-size: 12px; margin: 0;">
                     <option value="main_group">💬 Switch Chat Rooms / Private List...</option>
@@ -622,12 +694,10 @@ HTML_PAGE = """
             <div id="historyStream"></div>
         </div>
 
-        <!-- Left Pane (Control Buttons Area) placed second for mobile bottom placement -->
         <div class="left-pane">
             <h2 style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color);">WMA QQ Control Panel</h2>
-            <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:var(--accent-color);"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
+            <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInName" style="color:var(--accent-color);"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
             
-            <!-- Online Users Green Indicator List Panel -->
             <div class="card" style="border-color: #22c55e;">
                 <h4 style="color: #22c55e;">🟢 Online Users List</h4>
                 <div id="onlineUsersListContainer" style="max-height: 120px; overflow-y: auto; font-size: 12px; color: #cbd5e1;"></div>
@@ -644,7 +714,6 @@ HTML_PAGE = """
                 <div id="activeDeviceList" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
             </div>
 
-            <!-- Function 1: Voice Message -->
             <div class="card">
                 <h4 style="color: var(--accent-color);">Function 1: Voice Message (Max 3s)</h4>
                 <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
@@ -653,20 +722,17 @@ HTML_PAGE = """
                 </div>
             </div>
 
-            <!-- Function 2: Video Call -->
             <div class="card">
                 <h4 style="color: var(--accent-color);">Function 2: Video Call</h4>
                 <button onclick="triggerVideoCall()" style="background: #16a34a;">Call Active Users</button>
             </div>
 
-            <!-- Function 3: Text & Universal Equation -->
             <div class="card">
                 <h4 style="color: var(--accent-color);">Function 3: Text & Universal Equation</h4>
                 <textarea id="textContent" rows="3" placeholder="Write text or equation (e.g. 50 * 20 =)" oninput="solveEquation(this)"></textarea>
                 <button onclick="sendText()">Send Text (48h Auto-Delete)</button>
             </div>
 
-            <!-- Function 4: File or Image -->
             <div class="card">
                 <h4 style="color: var(--accent-color);">Function 4: Original File or Image (48h Auto-Delete)</h4>
                 <input type="file" id="fileInput" onchange="handleFileSelected(this)">
@@ -687,15 +753,21 @@ HTML_PAGE = """
         let isSpeakerMuted = false;
         let isCameraMuted = false;
         let wakeLock = null;
-        let activeEmailsCache = [];
+        let activeDevicesCache = [];
         let knownPrivateRooms = new Set();
         let notificationTimeout = null;
+        let pendingVerificationEmail = '';
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('/sw.js').catch(err => console.log(err));
             });
         }
+
+        // Keep Render Server awake via periodic client ping
+        setInterval(() => {
+            fetch('/ping').catch(e => {});
+        }, 300000); // every 5 minutes
 
         async function requestWakeLock() {
             try {
@@ -714,16 +786,17 @@ HTML_PAGE = """
         const servers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
 
         const animeThemes = [
-            { name: "Naruto Uzumaki", bg: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#f97316" },
-            { name: "Gojo Satoru", bg: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", accent: "#3b82f6" },
-            { name: "Wei Wuxian (MDZS)", bg: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", accent: "#a855f7" },
-            { name: "Nezuko Kamado", bg: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" }
+            { name: "Naruto Uzumaki", bg: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", char: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", accent: "#f97316" },
+            { name: "Gojo Satoru", bg: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", char: "https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=1920&q=80", accent: "#3b82f6" },
+            { name: "Wei Wuxian (MDZS)", bg: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", char: "https://images.unsplash.com/photo-1563089145-599997674d42?auto=format&fit=crop&w=1920&q=80", accent: "#a855f7" },
+            { name: "Nezuko Kamado", bg: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", char: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" }
         ];
 
         function autoGenerateAnimeTheme() {
             const theme = animeThemes[Math.floor(Math.random() * animeThemes.length)];
             document.documentElement.style.setProperty('--accent-color', theme.accent);
             document.documentElement.style.setProperty('--bg-image', `url('${theme.bg}')`);
+            document.documentElement.style.setProperty('--char-fg-image', `url('${theme.char}')`);
             localStorage.setItem('wma_current_theme', JSON.stringify(theme));
         }
 
@@ -734,6 +807,9 @@ HTML_PAGE = """
                     const theme = JSON.parse(savedTheme);
                     document.documentElement.style.setProperty('--accent-color', theme.accent);
                     document.documentElement.style.setProperty('--bg-image', `url('${theme.bg}')`);
+                    if(theme.char) {
+                        document.documentElement.style.setProperty('--char-fg-image', `url('${theme.char}')`);
+                    }
                 } catch(e) {}
             }
         });
@@ -751,6 +827,13 @@ HTML_PAGE = """
                 localStorage.setItem('wma_device_id', devId);
             }
             return devId;
+        }
+
+        function getUserDisplayName(email, deviceId) {
+            if (email === 'officialwinmyat@gmail.com') return 'Admin';
+            let storedName = localStorage.getItem('wma_custom_username_' + email);
+            if (storedName) return storedName;
+            return deviceId || email.split('@')[0];
         }
 
         window.addEventListener('DOMContentLoaded', () => {
@@ -791,8 +874,10 @@ HTML_PAGE = """
 
         function initAppSession(email, isAdmin) {
             document.getElementById('authOverlay').style.display = 'none';
+            document.getElementById('verifyOverlay').style.display = 'none';
             document.getElementById('appContainer').style.display = 'flex';
-            document.getElementById('currentLoggedInEmail').innerText = email;
+            const devId = getDeviceId();
+            document.getElementById('currentLoggedInName').innerText = getUserDisplayName(email, devId);
             if (isAdmin) {
                 document.getElementById('adminControlCard').style.display = 'block';
                 document.getElementById('resetBtn').style.display = 'block';
@@ -838,10 +923,32 @@ HTML_PAGE = """
             })
             .then(res => res.json())
             .then(data => {
+                if (data.success && data.requires_verification) {
+                    pendingVerificationEmail = email.trim().toLowerCase();
+                    document.getElementById('authOverlay').style.display = 'none';
+                    document.getElementById('verifyOverlay').style.display = 'flex';
+                } else {
+                    document.getElementById('loginError').innerText = data.error || "Signup error";
+                }
+            });
+        }
+
+        function submitVerificationCode() {
+            const code = document.getElementById('verificationCodeInput').value.trim();
+            const devId = getDeviceId();
+            if (!code) return;
+
+            fetch('/verify_code', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email: pendingVerificationEmail, code: code, device_id: devId})
+            })
+            .then(res => res.json())
+            .then(data => {
                 if (data.success) {
                     location.reload();
                 } else {
-                    document.getElementById('loginError').innerText = data.error;
+                    document.getElementById('verifyError').innerText = data.error;
                 }
             });
         }
@@ -884,12 +991,7 @@ HTML_PAGE = """
             .then(res => res.json())
             .then(devices => {
                 const devId = getDeviceId();
-                activeEmailsCache = [];
-                devices.forEach(d => {
-                    if (d.account && (d.status === 'approved' || d.account === 'officialwinmyat@gmail.com')) {
-                        activeEmailsCache.push(d.account.trim().toLowerCase());
-                    }
-                });
+                activeDevicesCache = devices;
 
                 let currentDev = devices.find(d => d.device_id === devId);
                 if (currentDev) {
@@ -920,34 +1022,47 @@ HTML_PAGE = """
                     });
                 }
                 
-                // Update Online Users List in Panel
                 updateOnlineUsersListUI();
                 updateOnlineIndicators();
             });
+        }
+
+        function getDisplayNameForEmail(email) {
+            let found = activeDevicesCache.find(d => d.account && d.account.trim().toLowerCase() === email.trim().toLowerCase());
+            let devId = found ? found.device_id : email.split('@')[0];
+            return getUserDisplayName(email, devId);
         }
 
         function updateOnlineUsersListUI() {
             const container = document.getElementById('onlineUsersListContainer');
             if (!container) return;
             container.innerHTML = '';
-            if (activeEmailsCache.length === 0) {
+            let onlineEmails = [];
+            activeDevicesCache.forEach(d => {
+                if (d.account && (d.status === 'approved' || d.account === 'officialwinmyat@gmail.com')) {
+                    onlineEmails.push(d.account.trim().toLowerCase());
+                }
+            });
+            if (onlineEmails.length === 0) {
                 container.innerHTML = '<i>No users online</i>';
                 return;
             }
-            activeEmailsCache.forEach(email => {
+            onlineEmails.forEach(email => {
+                let displayName = getDisplayNameForEmail(email);
                 let div = document.createElement('div');
                 div.style.padding = '4px 0';
                 div.style.borderBottom = '1px solid rgba(255,255,255,0.1)';
-                div.innerHTML = `<span class="online-dot"></span> <span class="user-email-tag" data-email="${email}" onclick="openPrivateChatWith('${email}')">${email}</span>`;
+                div.innerHTML = `<span class="online-dot"></span> <span class="user-name-tag" data-email="${email}" onclick="openPrivateChatWith('${email}')">${displayName}</span>`;
                 container.appendChild(div);
             });
         }
 
         function updateOnlineIndicators() {
-            document.querySelectorAll('.user-email-tag').forEach(tag => {
+            document.querySelectorAll('.user-name-tag').forEach(tag => {
                 const emailText = tag.getAttribute('data-email');
                 if (emailText) {
-                    const isOnline = activeEmailsCache.includes(emailText.trim().toLowerCase());
+                    let found = activeDevicesCache.find(d => d.account && d.account.trim().toLowerCase() === emailText.trim().toLowerCase());
+                    const isOnline = found && (found.status === 'approved' || found.account === 'officialwinmyat@gmail.com');
                     let dot = tag.querySelector('.online-dot');
                     if (isOnline) {
                         if (!dot) {
@@ -956,9 +1071,7 @@ HTML_PAGE = """
                             tag.appendChild(dot);
                         }
                     } else {
-                        if (dot) {
-                            dot.remove();
-                        }
+                        if (dot) dot.remove();
                     }
                 }
             });
@@ -968,7 +1081,6 @@ HTML_PAGE = """
             socket.emit('admin_device_action', {device_id: devId, action: action});
         }
 
-        // Room and Private Chat logic
         function loadChatHistory(roomName) {
             socket.emit('join_room', {room: roomName});
             fetch(`/get_history?room=${roomName}`)
@@ -981,20 +1093,21 @@ HTML_PAGE = """
         }
 
         function openPrivateChatWith(otherUserEmail) {
-            const myEmail = document.getElementById('currentLoggedInEmail').innerText.trim().toLowerCase();
+            const myEmail = localStorage.getItem('wma_remember_email') || '';
             const targetEmail = otherUserEmail.trim().toLowerCase();
             
-            if (myEmail === targetEmail) {
+            if (myEmail && myEmail.trim().toLowerCase() === targetEmail) {
                 alert("သင်ကိုယ်တိုင်နှင့် Private Chat ဖွင့်၍မရပါ။");
                 return;
             }
 
-            let emails = [myEmail, targetEmail].sort();
+            let emails = [myEmail || 'user', targetEmail].sort();
             currentRoom = `private_${emails[0]}_${emails[1]}`;
             knownPrivateRooms.add(currentRoom);
             updatePrivateChatSwitcherDropdown();
             
-            document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${targetEmail}`;
+            let targetDisplayName = getDisplayNameForEmail(targetEmail);
+            document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${targetDisplayName}`;
             document.getElementById('goToMainChatBtn').style.display = 'block';
             
             loadChatHistory(currentRoom);
@@ -1015,9 +1128,10 @@ HTML_PAGE = """
             } else if (val.startsWith('private_')) {
                 currentRoom = val;
                 let parts = val.replace('private_', '').split('_');
-                let myEmail = document.getElementById('currentLoggedInEmail').innerText.trim().toLowerCase();
+                let myEmail = localStorage.getItem('wma_remember_email') || '';
                 let otherEmail = parts[0] === myEmail ? parts[1] : parts[0];
-                document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${otherEmail}`;
+                let otherDisplayName = getDisplayNameForEmail(otherEmail);
+                document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${otherDisplayName}`;
                 document.getElementById('goToMainChatBtn').style.display = 'block';
                 loadChatHistory(currentRoom);
             }
@@ -1029,29 +1143,31 @@ HTML_PAGE = """
             switcher.innerHTML = `<option value="main_group">💬 Main Group Chat</option>`;
             knownPrivateRooms.forEach(room => {
                 let parts = room.replace('private_', '').split('_');
-                let myEmail = document.getElementById('currentLoggedInEmail').innerText.trim().toLowerCase();
+                let myEmail = localStorage.getItem('wma_remember_email') || '';
                 let otherEmail = parts[0] === myEmail ? parts[1] : parts[0];
+                let otherDisplayName = getDisplayNameForEmail(otherEmail);
                 let opt = document.createElement('option');
                 opt.value = room;
-                opt.innerText = `🔒 Private: ${otherEmail}`;
+                opt.innerText = `🔒 Private: ${otherDisplayName}`;
                 if (room === currentRoom) opt.selected = true;
                 switcher.appendChild(opt);
             });
         }
 
         socket.on('broadcast_message', data => {
-            const myEmail = document.getElementById('currentLoggedInEmail').innerText.trim().toLowerCase();
+            const myEmail = localStorage.getItem('wma_remember_email') || '';
             
-            // Check if message belongs to a private room where we are involved but not currently viewing
             if (data.room.startsWith('private_')) {
                 knownPrivateRooms.add(data.room);
                 updatePrivateChatSwitcherDropdown();
                 
-                if (data.room !== currentRoom && data.user.trim().toLowerCase() !== myEmail) {
-                    triggerTopLeftNotification(`${data.user} က သင့်ကို Private message ပို့နေပါသည်`);
+                if (data.room !== currentRoom && data.user.trim().toLowerCase() !== myEmail.toLowerCase()) {
+                    let senderName = getDisplayNameForEmail(data.user);
+                    triggerTopLeftNotification(`${senderName} က သင့်ကို Private message ပို့နေပါသည်`);
                 }
-            } else if (data.room === 'main_group' && currentRoom !== 'main_group' && data.user.trim().toLowerCase() !== myEmail) {
-                triggerTopLeftNotification(`${data.user} က Main Chat မှာ message ပို့နေပါသည်`);
+            } else if (data.room === 'main_group' && currentRoom !== 'main_group' && data.user.trim().toLowerCase() !== myEmail.toLowerCase()) {
+                let senderName = getDisplayNameForEmail(data.user);
+                triggerTopLeftNotification(`${senderName} က Main Chat မှာ message ပို့နေပါသည်`);
             }
 
             if (data.room === currentRoom) {
@@ -1082,9 +1198,11 @@ HTML_PAGE = """
             div.id = 'msg-box-' + item.id;
             
             const cleanUserEmail = item.user.trim().toLowerCase();
-            const isOnline = activeEmailsCache.includes(cleanUserEmail);
+            let found = activeDevicesCache.find(d => d.account && d.account.trim().toLowerCase() === cleanUserEmail);
+            const isOnline = found && (found.status === 'approved' || found.account === 'officialwinmyat@gmail.com');
             let dotHtml = isOnline ? `<span class="online-dot"></span>` : ``;
-            let userHtml = `<span class="user-email-tag" data-email="${item.user}" onclick="openPrivateChatWith('${item.user}')">${item.user}${dotHtml}</span>`;
+            let displayName = getDisplayNameForEmail(item.user);
+            let userHtml = `<span class="user-name-tag" data-email="${item.user}" onclick="openPrivateChatWith('${item.user}')">${displayName}${dotHtml}</span>`;
             let contentHtml = '';
             
             if (item.type === 'text') {
@@ -1092,13 +1210,13 @@ HTML_PAGE = """
             } else if (item.type === 'voice') {
                 contentHtml = `<div><b>${userHtml} [Voice]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
             } else if (item.type === 'file') {
-                if (item.filename && (item.filename.endsWith('.jpg') || item.filename.endsWith('.png') || item.filename.endsWith('.jpeg'))) {
+                if (item.filename && (item.filename.endsWith('.jpg') || item.filename.endsWith('.png') || item.filename.endsWith('.jpeg') || item.filename.endsWith('.gif'))) {
                     contentHtml = `<div><b>${userHtml} [Image]:</b><br><img src="${item.content}" class="chat-image-preview"></div>`;
                 } else {
-                    contentHtml = `<div><b>${userHtml} [File]:</b> <a href="${item.content}" download="${item.filename}" style="color:var(--accent-color);">${item.filename}</a></div>`;
+                    contentHtml = `<div><b>${userHtml} [File]:</b> <a href="${item.content}" download="${item.filename || 'download'}" style="color:var(--accent-color);">${item.filename || 'Download File'}</a></div>`;
                 }
             } else if (item.type === 'videocall_alert') {
-                contentHtml = `<div><b>🚨 Anime Video Call Alert:</b> ${item.user} has started a video call!
+                contentHtml = `<div><b>🚨 Anime Video Call Alert:</b> ${displayName} has started a video call!
                     <div style="margin-top: 8px; display: flex; gap: 8px;">
                         <button onclick="acceptVideoCall('${item.user}')" style="background:#16a34a; padding:4px 12px; font-size:12px; width:auto; border-radius:4px;">Accept</button>
                         <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626; padding:4px 12px; font-size:12px; width:auto; border-radius:4px;">Delete</button>
@@ -1119,8 +1237,9 @@ HTML_PAGE = """
             stream.appendChild(div);
             stream.scrollTop = stream.scrollHeight;
 
-            if (triggerNotification && 'Notification' in window && Notification.permission === 'granted' && item.user !== document.getElementById('currentLoggedInEmail').innerText) {
-                new Notification(`WMA QQ - Message from ${item.user}`, {
+            let myEmail = localStorage.getItem('wma_remember_email') || '';
+            if (triggerNotification && 'Notification' in window && Notification.permission === 'granted' && item.user.trim().toLowerCase() !== myEmail.toLowerCase()) {
+                new Notification(`WMA QQ - Message from ${displayName}`, {
                     body: item.type === 'text' ? item.content : `New ${item.type} received!`,
                     icon: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=120&q=80'
                 });
@@ -1128,7 +1247,7 @@ HTML_PAGE = """
         }
 
         function copyTextContent(encodedText) {
-            navigator.clipboard.writeText(decodeURIComponent(encodedText)).then(() => alert("Copied!"));
+            navigator.clipboard.writeText(decodeURIComponent(encodedText));
         }
 
         function saveToDevice(dataUrl, filename) {
@@ -1175,8 +1294,9 @@ HTML_PAGE = """
 
         function sendVoice(storeType) {
             if (window.tempVoiceData) {
+                let myEmail = localStorage.getItem('wma_remember_email') || 'user';
                 socket.emit('new_message', {
-                    user: document.getElementById('currentLoggedInEmail').innerText,
+                    user: myEmail,
                     type: 'voice',
                     content: window.tempVoiceData,
                     store: '48 Hours',
@@ -1201,8 +1321,9 @@ HTML_PAGE = """
         function sendText() {
             const content = document.getElementById('textContent').value;
             if (!content) return;
+            let myEmail = localStorage.getItem('wma_remember_email') || 'user';
             socket.emit('new_message', {
-                user: document.getElementById('currentLoggedInEmail').innerText,
+                user: myEmail,
                 type: 'text',
                 content: content,
                 store: '48 Hours',
@@ -1227,8 +1348,9 @@ HTML_PAGE = """
 
         function sendFile() {
             if (!selectedFileBase64) return;
+            let myEmail = localStorage.getItem('wma_remember_email') || 'user';
             socket.emit('new_message', {
-                user: document.getElementById('currentLoggedInEmail').innerText,
+                user: myEmail,
                 type: 'file',
                 content: selectedFileBase64,
                 filename: selectedFileName,
@@ -1242,28 +1364,30 @@ HTML_PAGE = """
         }
 
         function triggerVideoCall() {
-            const currentUser = document.getElementById('currentLoggedInEmail').innerText;
-            socket.emit('trigger_video_call', {user: currentUser});
+            let myEmail = localStorage.getItem('wma_remember_email') || 'user';
+            socket.emit('trigger_video_call', {user: myEmail});
             socket.emit('new_message', {
-                user: currentUser,
+                user: myEmail,
                 type: 'videocall_alert',
                 content: 'Triggered conference',
                 store: '48 Hours',
                 room: currentRoom
             });
-            startConferenceUI(currentUser);
+            startConferenceUI(myEmail);
         }
 
         socket.on('incoming_video_call', data => {});
 
         function acceptVideoCall(callerUser) {
             startConferenceUI(callerUser);
-            socket.emit('video_signal', {type: 'join_call', user: document.getElementById('currentLoggedInEmail').innerText});
+            let myEmail = localStorage.getItem('wma_remember_email') || 'user';
+            socket.emit('video_signal', {type: 'join_call', user: myEmail});
         }
 
         function startConferenceUI(callerName) {
             document.getElementById('videoPopup').style.display = 'block';
-            document.getElementById('callerInfo').innerText = `Conference Initiated by: ${callerName}`;
+            let callerDisplayName = getDisplayNameForEmail(callerName);
+            document.getElementById('callerInfo').innerText = `Conference Initiated by: ${callerDisplayName}`;
             navigator.mediaDevices.getUserMedia({video: true, audio: true})
             .then(stream => {
                 localStream = stream;
