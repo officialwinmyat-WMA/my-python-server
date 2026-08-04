@@ -5,11 +5,11 @@ import requests
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template_string, session, send_file
 
-# Python compatibility fix for gevent
+# Python compatibility fix for gevent (Disabled patch for ssl to prevent recursion error)
 import sys
 from gevent import monkey
 try:
-    monkey.patch_all()
+    monkey.patch_all(ssl=False)
 except Exception:
     pass
 
@@ -83,8 +83,6 @@ def send_verification_email(recipient_email, code):
             "Authorization": f"Bearer {resend_api_key}",
             "Content-Type": "application/json"
         }
-        # Resend testing restriction fix: If using onboarding@resend.dev, it only works if recipient is verified or account owner. 
-        # Fallback payload to ensure safety.
         payload = {
             "from": "WMA QQ <onboarding@resend.dev>",
             "to": [recipient_email],
@@ -171,9 +169,7 @@ def signup():
         
         sent = send_verification_email(email, code)
         
-        # Admin သို့မဟုတ် Testing အနေနဲ့ Email ပို့မရရင်တောင် Error မတက်ဘဲ ဆက်သွားလို့ရအောင် (သို့မဟုတ် Code ကို Admin Email ထဲ ပို့ပေးနိုင်အောင်)
         if not sent and email != 'officialwinmyat@gmail.com':
-            # Resend domain limitation bypass for testing: allow direct message or log code
             print(f"CRITICAL: Failed to send email to {email}. Verification Code is: {code}")
             
         return jsonify({"success": True, "requires_verification": True})
