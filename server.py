@@ -84,7 +84,7 @@ def send_verification_email(recipient_email, code):
         msg['From'] = sender_email
         msg['To'] = recipient_email
         
-        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server = smtplib.SMTP('smtp.gmail.com', 587, timeout=10)
         server.starttls()
         server.login(sender_email, sender_password)
         server.sendmail(sender_email, [recipient_email], msg.as_string())
@@ -105,7 +105,7 @@ def send_approval_email(device_id, google_account):
         msg['From'] = sender_email
         msg['To'] = "officialwinmyat@gmail.com"
         
-        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server = smtplib.SMTP('smtp.gmail.com', 587, timeout=10)
         server.starttls()
         server.login(sender_email, sender_password)
         server.sendmail(sender_email, ["officialwinmyat@gmail.com"], msg.as_string())
@@ -161,7 +161,7 @@ def signup():
         
         sent = send_verification_email(email, code)
         if not sent and email != 'officialwinmyat@gmail.com':
-            return jsonify({"success": False, "error": "Verification Email ပို့၍ မရပါ။ SMTP သို့မဟုတ် Email ကို စစ်ဆေးပါ။"})
+            return jsonify({"success": False, "error": "Verification Email ပို့၍ မရပါ။ (Network/SMTP error) ခဏကြာမှ ထပ်ကြိုးစားပါ။"})
             
         return jsonify({"success": True, "requires_verification": True})
     except Exception as e:
@@ -172,7 +172,6 @@ def verify_code():
     data = request.json
     email = data.get('email', '').strip().lower()
     code = data.get('code', '').strip()
-    device_id = data.get('device_id', '')
     
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
@@ -487,7 +486,6 @@ HTML_PAGE = """
             display: flex; height: 100vh; overflow: hidden;
             position: relative;
         }
-        /* Character Foreground Watermark Overlay */
         body::before {
             content: "";
             position: fixed;
@@ -549,7 +547,6 @@ HTML_PAGE = """
         .user-name-tag { color: var(--accent-color); cursor: pointer; text-decoration: underline; font-weight: bold; position: relative; display: inline-block; }
         .user-name-tag:hover { color: #fff; }
         
-        /* Online Status Green Indicator Dot */
         .online-dot {
             display: inline-block;
             width: 9px;
@@ -561,7 +558,6 @@ HTML_PAGE = """
             vertical-align: middle;
         }
         
-        /* Top-Left Notification Banner */
         #topNotificationBanner {
             display: none;
             position: absolute;
@@ -764,10 +760,9 @@ HTML_PAGE = """
             });
         }
 
-        // Keep Render Server awake via periodic client ping
         setInterval(() => {
             fetch('/ping').catch(e => {});
-        }, 300000); // every 5 minutes
+        }, 300000);
 
         async function requestWakeLock() {
             try {
