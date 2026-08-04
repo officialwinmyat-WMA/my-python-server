@@ -4,3 +4,4 @@ gunicorn
 gevent
 simple-websocket
 gevent-websocket
+requests
