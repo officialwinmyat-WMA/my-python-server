@@ -467,6 +467,24 @@ HTML_PAGE = """
             vertical-align: middle;
         }
         
+        /* Top-Left Notification Banner */
+        #topNotificationBanner {
+            display: none;
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1001;
+            background: rgba(236, 72, 153, 0.95);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: bold;
+            box-shadow: 0 0 10px var(--accent-color);
+            border: 1px solid #fff;
+            animation: fadeInOut 2s ease;
+        }
+
         #resetBtn {
             position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white;
             padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none;
@@ -584,12 +602,21 @@ HTML_PAGE = """
 
         <!-- Right Pane (Chat Room Area) placed first for mobile top placement -->
         <div class="right-pane" id="rightPane">
+            <!-- Top-Left Notification Banner -->
+            <div id="topNotificationBanner"></div>
             <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
             
             <!-- Chat Room Title & Go to Main Chat Room Button -->
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
                 <h3 id="currentChatRoomTitle" style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color); margin: 0 0 10px 0;">WMA QQ - Main Group Chat</h3>
                 <button id="goToMainChatBtn" onclick="switchToMainChat()">Go to Main Chat Room</button>
+            </div>
+
+            <!-- Top-Left Private Chat List Quick Switcher -->
+            <div style="margin-bottom: 8px;">
+                <select id="privateChatSwitcher" onchange="switchPrivateChatFromDropdown(this)" style="padding: 6px; font-size: 12px; margin: 0;">
+                    <option value="main_group">💬 Switch Chat Rooms / Private List...</option>
+                </select>
             </div>
 
             <div id="historyStream"></div>
@@ -600,6 +627,12 @@ HTML_PAGE = """
             <h2 style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color);">WMA QQ Control Panel</h2>
             <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:var(--accent-color);"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
             
+            <!-- Online Users Green Indicator List Panel -->
+            <div class="card" style="border-color: #22c55e;">
+                <h4 style="color: #22c55e;">🟢 Online Users List</h4>
+                <div id="onlineUsersListContainer" style="max-height: 120px; overflow-y: auto; font-size: 12px; color: #cbd5e1;"></div>
+            </div>
+
             <div class="card">
                 <h4 style="color: var(--accent-color);">Dynamic Anime Themes</h4>
                 <button onclick="autoGenerateAnimeTheme()">Randomize Anime Character Theme</button>
@@ -655,6 +688,8 @@ HTML_PAGE = """
         let isCameraMuted = false;
         let wakeLock = null;
         let activeEmailsCache = [];
+        let knownPrivateRooms = new Set();
+        let notificationTimeout = null;
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
@@ -885,8 +920,26 @@ HTML_PAGE = """
                     });
                 }
                 
-                // Refresh message elements to update online status indicators in Main Group Chat
+                // Update Online Users List in Panel
+                updateOnlineUsersListUI();
                 updateOnlineIndicators();
+            });
+        }
+
+        function updateOnlineUsersListUI() {
+            const container = document.getElementById('onlineUsersListContainer');
+            if (!container) return;
+            container.innerHTML = '';
+            if (activeEmailsCache.length === 0) {
+                container.innerHTML = '<i>No users online</i>';
+                return;
+            }
+            activeEmailsCache.forEach(email => {
+                let div = document.createElement('div');
+                div.style.padding = '4px 0';
+                div.style.borderBottom = '1px solid rgba(255,255,255,0.1)';
+                div.innerHTML = `<span class="online-dot"></span> <span class="user-email-tag" data-email="${email}" onclick="openPrivateChatWith('${email}')">${email}</span>`;
+                container.appendChild(div);
             });
         }
 
@@ -938,6 +991,8 @@ HTML_PAGE = """
 
             let emails = [myEmail, targetEmail].sort();
             currentRoom = `private_${emails[0]}_${emails[1]}`;
+            knownPrivateRooms.add(currentRoom);
+            updatePrivateChatSwitcherDropdown();
             
             document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${targetEmail}`;
             document.getElementById('goToMainChatBtn').style.display = 'block';
@@ -949,14 +1004,71 @@ HTML_PAGE = """
             currentRoom = 'main_group';
             document.getElementById('currentChatRoomTitle').innerText = "WMA QQ - Main Group Chat";
             document.getElementById('goToMainChatBtn').style.display = 'none';
+            document.getElementById('privateChatSwitcher').value = 'main_group';
             loadChatHistory(currentRoom);
         }
 
+        function switchPrivateChatFromDropdown(selectElem) {
+            const val = selectElem.value;
+            if (val === 'main_group') {
+                switchToMainChat();
+            } else if (val.startsWith('private_')) {
+                currentRoom = val;
+                let parts = val.replace('private_', '').split('_');
+                let myEmail = document.getElementById('currentLoggedInEmail').innerText.trim().toLowerCase();
+                let otherEmail = parts[0] === myEmail ? parts[1] : parts[0];
+                document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${otherEmail}`;
+                document.getElementById('goToMainChatBtn').style.display = 'block';
+                loadChatHistory(currentRoom);
+            }
+        }
+
+        function updatePrivateChatSwitcherDropdown() {
+            const switcher = document.getElementById('privateChatSwitcher');
+            if (!switcher) return;
+            switcher.innerHTML = `<option value="main_group">💬 Main Group Chat</option>`;
+            knownPrivateRooms.forEach(room => {
+                let parts = room.replace('private_', '').split('_');
+                let myEmail = document.getElementById('currentLoggedInEmail').innerText.trim().toLowerCase();
+                let otherEmail = parts[0] === myEmail ? parts[1] : parts[0];
+                let opt = document.createElement('option');
+                opt.value = room;
+                opt.innerText = `🔒 Private: ${otherEmail}`;
+                if (room === currentRoom) opt.selected = true;
+                switcher.appendChild(opt);
+            });
+        }
+
         socket.on('broadcast_message', data => {
+            const myEmail = document.getElementById('currentLoggedInEmail').innerText.trim().toLowerCase();
+            
+            // Check if message belongs to a private room where we are involved but not currently viewing
+            if (data.room.startsWith('private_')) {
+                knownPrivateRooms.add(data.room);
+                updatePrivateChatSwitcherDropdown();
+                
+                if (data.room !== currentRoom && data.user.trim().toLowerCase() !== myEmail) {
+                    triggerTopLeftNotification(`${data.user} က သင့်ကို Private message ပို့နေပါသည်`);
+                }
+            } else if (data.room === 'main_group' && currentRoom !== 'main_group' && data.user.trim().toLowerCase() !== myEmail) {
+                triggerTopLeftNotification(`${data.user} က Main Chat မှာ message ပို့နေပါသည်`);
+            }
+
             if (data.room === currentRoom) {
                 appendMessageToStream(data, true);
             }
         });
+
+        function triggerTopLeftNotification(text) {
+            const banner = document.getElementById('topNotificationBanner');
+            if (!banner) return;
+            banner.innerText = text;
+            banner.style.display = 'block';
+            if (notificationTimeout) clearTimeout(notificationTimeout);
+            notificationTimeout = setTimeout(() => {
+                banner.style.display = 'none';
+            }, 2000);
+        }
 
         socket.on('message_deleted', data => {
             const el = document.getElementById('msg-box-' + data.id);
@@ -1230,7 +1342,6 @@ HTML_PAGE = """
 
         function stopConference() {
             if (localStream) {
-                localStream.getTracks().export.forEach ? localStream.getTracks().forEach(track => track.stop()) : null;
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
             }
