@@ -91,7 +91,7 @@ def send_verification_email(recipient_email, code):
         server.quit()
         return True
     except Exception as e:
-        print("Email sending error:", e)
+        print("Email sending error (Render Free Tier blocks SMTP port 587):", e)
         return False
 
 def send_approval_email(device_id, google_account):
@@ -161,7 +161,7 @@ def signup():
         
         sent = send_verification_email(email, code)
         if not sent and email != 'officialwinmyat@gmail.com':
-            return jsonify({"success": False, "error": "Verification Email ပို့၍ မရပါ။ (Network/SMTP error) ခဏကြာမှ ထပ်ကြိုးစားပါ။"})
+            return jsonify({"success": False, "error": "Verification Email ပို့၍ မရပါ။ (Render Free Tier blocks SMTP) ခဏကြာမှ ထပ်ကြိုးစားပါ။"})
             
         return jsonify({"success": True, "requires_verification": True})
     except Exception as e:
