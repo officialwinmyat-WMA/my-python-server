@@ -19,9 +19,9 @@ app.secret_key = os.environ.get("SECRET_KEY", "wma_qq_secure_secret_key_123")
 from flask_socketio import SocketIO, emit
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
-# Database Initialization
+# Database Initialization (Supporting both Group and Private Chats)
 def init_db():
-    conn = sqlite3.connect('wma_qq.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS history (
@@ -31,6 +31,7 @@ def init_db():
             content TEXT,
             filename TEXT,
             store_type TEXT,
+            room TEXT,
             expire_at DATETIME,
             timestamp DATETIME
         )
@@ -40,7 +41,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             device_id TEXT UNIQUE,
             google_account TEXT,
-            status TEXT, -- 'pending', 'approved', 'banned'
+            status TEXT,
             last_active DATETIME
         )
     ''')
@@ -58,10 +59,9 @@ def init_db():
 
 init_db()
 
-# Background task or query check to auto-delete messages older than 48 hours
 def clean_expired_history():
     try:
-        conn = sqlite3.connect('wma_qq.db')
+        conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute('DELETE FROM history WHERE expire_at < ?', (now_str,))
@@ -76,7 +76,7 @@ def send_approval_email(device_id, google_account):
         sender_password = os.environ.get("SMTP_PASSWORD", "")
         if not sender_password:
             return
-        msg = MIMEText(f"New Device Access Request:\n\nDevice ID: {device_id}\nGoogle Account: {google_account}\n\nPlease go to your WMA QQ dashboard to approve or ban this device.")
+        msg = MIMEText(f"New Device Access Request:\n\nDevice ID: {device_id}\nGoogle Account: {google_account}\n\nPlease go to your dashboard to approve or ban this device.")
         msg['Subject'] = f"WMA QQ - New Device Pending Approval: {device_id}"
         msg['From'] = sender_email
         msg['To'] = "officialwinmyat@gmail.com"
@@ -93,7 +93,6 @@ def send_approval_email(device_id, google_account):
 def index():
     return render_template_string(HTML_PAGE)
 
-# PWA Routes
 @app.route('/manifest.json')
 def serve_manifest():
     return send_file('manifest.json', mimetype='application/manifest+json')
@@ -113,7 +112,7 @@ def signup():
         return jsonify({"success": False, "error": "Email နှင့် Password ထည့်ရန် လိုအပ်ပါသည်။"})
     
     try:
-        conn = sqlite3.connect('wma_qq.db')
+        conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
         cursor.execute('INSERT INTO users (email, password, device_id) VALUES (?, ?, ?)', (email, password, device_id))
         conn.commit()
@@ -135,7 +134,7 @@ def login():
     remember = data.get('remember', False)
     device_id = data.get('device_id', '')
     
-    conn = sqlite3.connect('wma_qq.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     cursor.execute('SELECT password FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
@@ -165,7 +164,7 @@ def check_remember():
     if not email or not token or not device_id:
         return jsonify({"logged_in": False})
         
-    conn = sqlite3.connect('wma_qq.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     cursor.execute('SELECT remember_token, device_id FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
@@ -188,7 +187,7 @@ def reset_password_google():
     if not email or not new_password:
         return jsonify({"success": False, "error": "Email နှင့် Password အသစ်ထည့်ရန် လိုအပ်ပါသည်။"})
         
-    conn = sqlite3.connect('wma_qq.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
@@ -224,7 +223,7 @@ def check_session():
 def get_devices():
     if 'user_email' not in session:
         return jsonify([])
-    conn = sqlite3.connect('wma_qq.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     cursor.execute('SELECT device_id, google_account, status, last_active FROM devices')
     rows = cursor.fetchall()
@@ -243,10 +242,11 @@ def get_devices():
 
 @app.route('/get_history', methods=['GET'])
 def get_history():
+    room = request.args.get('room', 'main_group')
     clean_expired_history()
-    conn = sqlite3.connect('wma_qq.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT id, user_info, msg_type, content, filename, store_type, timestamp FROM history ORDER BY id DESC')
+    cursor.execute('SELECT id, user_info, msg_type, content, filename, store_type, room, timestamp FROM history WHERE room = ? ORDER BY id DESC', (room,))
     rows = cursor.fetchall()
     conn.close()
     
@@ -259,7 +259,8 @@ def get_history():
             "content": r[3],
             "filename": r[4],
             "store": r[5],
-            "timestamp": r[6]
+            "room": r[6],
+            "timestamp": r[7]
         })
     return jsonify(history)
 
@@ -270,7 +271,7 @@ def handle_register_device(data):
     if not dev_id or not google_acc:
         return
         
-    conn = sqlite3.connect('wma_qq.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
     row = cursor.fetchone()
@@ -295,7 +296,7 @@ def handle_admin_action(data):
     dev_id = data.get('device_id')
     action = data.get('action')
     
-    conn = sqlite3.connect('wma_qq.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     if action == 'remove':
         cursor.execute('SELECT google_account FROM devices WHERE device_id = ?', (dev_id,))
@@ -310,6 +311,13 @@ def handle_admin_action(data):
     conn.close()
     socketio.emit('device_status_update', {'device_id': dev_id})
 
+@socketio.on('join_room')
+def handle_join_room(data):
+    from flask_socketio import join_room
+    room = data.get('room')
+    if room:
+        join_room(room)
+
 @socketio.on('new_message')
 def handle_new_message(data):
     user = data.get('user')
@@ -317,14 +325,15 @@ def handle_new_message(data):
     content = data.get('content')
     filename = data.get('filename', '')
     store = data.get('store', '48 Hours Auto-Delete')
+    room = data.get('room', 'main_group')
     
     now = datetime.now()
     expire_at = now + timedelta(hours=48)
         
-    conn = sqlite3.connect('wma_qq.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                   (user, msg_type, content, filename, store, expire_at.strftime('%Y-%m-%d %H:%M:%S'), now.strftime('%Y-%m-%d %H:%M:%S')))
+    cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, room, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                   (user, msg_type, content, filename, store, room, expire_at.strftime('%Y-%m-%d %H:%M:%S'), now.strftime('%Y-%m-%d %H:%M:%S')))
     msg_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -336,19 +345,21 @@ def handle_new_message(data):
         "content": content,
         "filename": filename,
         "store": store,
+        "room": room,
         "timestamp": now.strftime('%Y-%m-%d %H:%M:%S')
-    })
+    }, room=room)
 
 @socketio.on('delete_message_item')
 def handle_delete_message(data):
     msg_id = data.get('id')
+    room = data.get('room', 'main_group')
     if msg_id:
-        conn = sqlite3.connect('wma_qq.db')
+        conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
         cursor.execute('DELETE FROM history WHERE id = ?', (msg_id,))
         conn.commit()
         conn.close()
-        socketio.emit('message_deleted', {"id": msg_id})
+        socketio.emit('message_deleted', {"id": msg_id}, room=room)
 
 @socketio.on('trigger_video_call')
 def handle_video_call(data):
@@ -361,7 +372,7 @@ def handle_video_signal(data):
 @socketio.on('reset_storage')
 def handle_reset():
     if session.get('user_email') == 'officialwinmyat@gmail.com':
-        conn = sqlite3.connect('wma_qq.db')
+        conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
         cursor.execute('DELETE FROM history')
         conn.commit()
@@ -372,7 +383,7 @@ HTML_PAGE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WMA QQ - Chinese & Japanese Anime Spacial Web App</title>
+    <title>WMA QQ - Private & Group Anime Chat Hub</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#ec4899">
@@ -428,7 +439,7 @@ HTML_PAGE = """
         button:hover { opacity: 0.9; transform: scale(1.02); box-shadow: 0 0 12px var(--accent-color); }
         #historyStream {
             flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color);
-            border-radius: 10px; padding: 12px; box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 40px;
+            border-radius: 10px; padding: 12px; box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 10px;
             box-shadow: inset 0 0 15px color-mix(in srgb, var(--accent-color) 20%, transparent);
         }
         .history-item {
@@ -438,9 +449,15 @@ HTML_PAGE = """
         }
         .msg-actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
         .msg-actions button { padding: 4px 10px; font-size: 11px; width: auto; margin: 0; border-radius: 4px; background: var(--accent-color); border: 1px solid #fff; }
+        .user-email-tag { color: var(--accent-color); cursor: pointer; text-decoration: underline; font-weight: bold; }
+        .user-email-tag:hover { color: #fff; }
+        
         #resetBtn {
             position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white;
             padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none;
+        }
+        #goToMainChatBtn {
+            display: none; margin-bottom: 10px; background: #2563eb; color: white; font-weight: bold; border: 2px solid #fff; padding: 8px; border-radius: 6px; cursor: pointer; text-align: center;
         }
         #videoPopup {
             display: none; position: fixed; top: 10%; left: 15%; width: 70%;
@@ -460,20 +477,18 @@ HTML_PAGE = """
         #pendingOverlay { display: none; }
         .chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 2px solid var(--accent-color); display: block; }
 
-        /* Responsive Mobile Layout Fix */
         @media (max-width: 768px) {
             body { flex-direction: column; height: auto; overflow-y: auto; }
             .left-pane, .right-pane { width: 100%; height: auto; min-height: 50vh; border: none; border-bottom: 3px solid var(--accent-color); }
             #videoPopup { width: 90%; left: 5%; top: 5%; }
-            #historyStream { margin-top: 20px; min-height: 350px; }
+            #historyStream { margin-top: 10px; min-height: 350px; }
         }
     </style>
 </head>
 <body>
-    <!-- Login / Sign Up Screen -->
     <div id="authOverlay">
-        <h2 style="color: var(--accent-color); text-shadow: 0 0 10px var(--accent-color);">WMA QQ - Chinese & Japanese Anime Hub</h2>
-        <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password ဖြင့် ဝင်ရောက်ပါ (သို့မဟုတ် အကောင့်အသစ်ဖွင့်ပါ)</p>
+        <h2 style="color: var(--accent-color); text-shadow: 0 0 10px var(--accent-color);">WMA QQ - Private & Group Anime Hub</h2>
+        <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password ဖြင့် ဝင်ရောက်ပါ</p>
         <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px; box-shadow: 0 0 20px var(--accent-color);">
             <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
             <input type="password" id="loginPassword" placeholder="Password">
@@ -481,19 +496,18 @@ HTML_PAGE = """
                 <input type="checkbox" id="showPasswordToggle" onclick="togglePasswordVisibility()" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Password ပြရန်
             </div>
             <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0 10px 0;">
-                <input type="checkbox" id="rememberMeToggle" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Remember Me (အကောင့်မှတ်ထားရန်)
+                <input type="checkbox" id="rememberMeToggle" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Remember Me
             </div>
             <button onclick="loginUser()" style="background: var(--accent-color); margin-top: 5px;">Login</button>
-            <button onclick="signupUser()" style="background: #3b82f6; margin-top: 5px;">Sign Up (အကောင့်သစ်ဖွင့်ရန်)</button>
-            <button onclick="openForgetPassword()" style="background: #ca8a04; margin-top: 5px; font-size: 12px;">Forget Password? (Google Account ဖြင့် Reset လုပ်ရန်)</button>
+            <button onclick="signupUser()" style="background: #3b82f6; margin-top: 5px;">Sign Up</button>
+            <button onclick="openForgetPassword()" style="background: #ca8a04; margin-top: 5px; font-size: 12px;">Forget Password?</button>
             <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
     </div>
 
-    <!-- Pending / Ban Access Block Screen -->
     <div id="pendingOverlay">
         <h2 id="overlayTitle" style="color: var(--accent-color);">WMA QQ - Device Verification Required</h2>
-        <p id="overlayDesc" style="max-width: 500px; color: #cbd5e1; margin: 15px 0;">သင့် Device သည် Admin (officialwinmyat@gmail.com) ထံမှ Approve အတည်ပြုချက် ရယူရန် လိုအပ်နေပါသည်။</p>
+        <p id="overlayDesc" style="max-width: 500px; color: #cbd5e1; margin: 15px 0;">သင့် Device သည် Admin ထံမှ Approve အတည်ပြုချက် ရယူရန် လိုအပ်နေပါသည်။</p>
         <div style="background: rgba(255,255,255,0.08); padding: 15px; border-radius: 10px; border: 2px solid var(--accent-color); margin-bottom: 15px; width: 320px;">
             <input type="text" id="overlayDeviceId" readonly style="text-align:center; font-weight:bold;">
             <div id="overlayStatus" style="font-size: 14px; color: #facc15; font-weight: bold; margin-top: 10px;">Status: Pending Approval ⏳</div>
@@ -501,9 +515,7 @@ HTML_PAGE = """
         <button onclick="logoutUser()" style="background: #dc2626; width: auto; padding: 8px 15px;">Logout</button>
     </div>
 
-    <!-- Main Application Container -->
     <div id="appContainer">
-        <!-- Video Conference Popup -->
         <div id="videoPopup">
             <h3>WMA QQ - Anime Video Conference</h3>
             <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: var(--accent-color);"></div>
@@ -519,17 +531,16 @@ HTML_PAGE = """
         </div>
 
         <div class="left-pane">
-            <h2 style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color);">WMA QQ Anime Control Panel</h2>
+            <h2 style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color);">WMA QQ Control Panel</h2>
             <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:var(--accent-color);"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
+            
             <div class="card">
-                <h4 style="color: var(--accent-color);">Dynamic Chinese & Japanese Anime Themes</h4>
+                <h4 style="color: var(--accent-color);">Dynamic Anime Themes</h4>
                 <button onclick="autoGenerateAnimeTheme()">Randomize Anime Character Theme</button>
             </div>
 
-            <!-- Admin Control Panel Card -->
             <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
-                <h4 style="color: #f59e0b;">👑 Admin Control Panel (Official Win Myat)</h4>
-                <p style="font-size: 11px; color: #cbd5e1; margin: 0 0 8px 0;">ဤနေရာမှသာ Device များကို Approve, Ban သို့မဟုတ် Remove လုပ်နိုင်ပါသည်။ (Remove လုပ်ပါက Users database မှပါ ဖျက်ပစ်မည်)</p>
+                <h4 style="color: #f59e0b;">👑 Admin Control Panel</h4>
                 <div style="font-size: 12px; color: #facc15; margin-bottom: 5px;">Active & Pending Devices List:</div>
                 <div id="activeDeviceList" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
             </div>
@@ -546,7 +557,7 @@ HTML_PAGE = """
             <!-- Function 2: Video Call -->
             <div class="card">
                 <h4 style="color: var(--accent-color);">Function 2: Video Call</h4>
-                <button onclick="triggerVideoCall()" style="background: #16a34a;">Call All Active Users</button>
+                <button onclick="triggerVideoCall()" style="background: #16a34a;">Call Active Users</button>
             </div>
 
             <!-- Function 3: Text & Universal Equation -->
@@ -566,13 +577,20 @@ HTML_PAGE = """
 
         <div class="right-pane" id="rightPane">
             <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
-            <h3 style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color);">WMA QQ - Live Chat & History Stream</h3>
+            
+            <!-- Chat Room Title & Go to Main Chat Room Button -->
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+                <h3 id="currentChatRoomTitle" style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color); margin: 0 0 10px 0;">WMA QQ - Main Group Chat</h3>
+                <button id="goToMainChatBtn" onclick="switchToMainChat()">Go to Main Chat Room</button>
+            </div>
+
             <div id="historyStream"></div>
         </div>
     </div>
 
     <script>
         const socket = io();
+        let currentRoom = 'main_group';
         let mediaRecorder;
         let audioChunks = [];
         let localStream = null;
@@ -583,66 +601,42 @@ HTML_PAGE = """
         let isCameraMuted = false;
         let wakeLock = null;
 
-        // Register Service Worker for PWA
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js')
-                    .then(reg => console.log('ServiceWorker registered! Scope:', reg.scope))
-                    .catch(err => console.log('ServiceWorker registration failed:', err));
+                navigator.serviceWorker.register('/sw.js').catch(err => console.log(err));
             });
         }
 
-        // Screen Wake Lock to keep screen awake / prevent screen off
         async function requestWakeLock() {
             try {
                 if ('wakeLock' in navigator) {
                     wakeLock = await navigator.wakeLock.request('screen');
-                    wakeLock.addEventListener('release', () => {
-                        wakeLock = null;
-                    });
+                    wakeLock.addEventListener('release', () => { wakeLock = null; });
                 }
-            } catch (err) {
-                console.error(`${err.name}, ${err.message}`);
-            }
+            } catch (err) {}
         }
-        document.addEventListener('visibilitychange', async () => {
-            if (wakeLock !== null && document.visibilityState === 'visible') {
-                await requestWakeLock();
-            }
-        });
         requestWakeLock();
 
-        // Browser Notification permission request
         if ('Notification' in window && Notification.permission !== 'granted') {
             Notification.requestPermission();
         }
 
-        const servers = {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' }
-            ]
-        };
+        const servers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
 
         const animeThemes = [
             { name: "Naruto Uzumaki", bg: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#f97316" },
             { name: "Gojo Satoru", bg: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", accent: "#3b82f6" },
             { name: "Wei Wuxian (MDZS)", bg: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", accent: "#a855f7" },
-            { name: "Nezuko Kamado", bg: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" },
-            { name: "Tanjiro Kamado", bg: "https://images.unsplash.com/photo-1563089145-599997674d42?auto=format&fit=crop&w=1920&q=80", accent: "#22c55e" },
-            { name: "Lelouch Lamperouge", bg: "https://images.unsplash.com/photo-1614850523459-c2f4c699c52e?auto=format&fit=crop&w=1920&q=80", accent: "#eab308" }
+            { name: "Nezuko Kamado", bg: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" }
         ];
 
         function autoGenerateAnimeTheme() {
             const theme = animeThemes[Math.floor(Math.random() * animeThemes.length)];
             document.documentElement.style.setProperty('--accent-color', theme.accent);
             document.documentElement.style.setProperty('--bg-image', `url('${theme.bg}')`);
-            
-            // Save selected theme to localStorage for continuity
             localStorage.setItem('wma_current_theme', JSON.stringify(theme));
         }
 
-        // Load saved theme on startup
         window.addEventListener('DOMContentLoaded', () => {
             const savedTheme = localStorage.getItem('wma_current_theme');
             if (savedTheme) {
@@ -683,14 +677,7 @@ HTML_PAGE = """
                 .then(res => res.json())
                 .then(data => {
                     if (data.logged_in) {
-                        document.getElementById('authOverlay').style.display = 'none';
-                        document.getElementById('appContainer').style.display = 'flex';
-                        document.getElementById('currentLoggedInEmail').innerText = data.email;
-                        if (data.is_admin) {
-                            document.getElementById('adminControlCard').style.display = 'block';
-                            document.getElementById('resetBtn').style.display = 'block';
-                        }
-                        registerDeviceWithServer(data.email);
+                        initAppSession(data.email, data.is_admin);
                     } else {
                         checkNormalSession();
                     }
@@ -705,18 +692,23 @@ HTML_PAGE = """
             .then(res => res.json())
             .then(data => {
                 if (data.logged_in) {
-                    document.getElementById('authOverlay').style.display = 'none';
-                    document.getElementById('appContainer').style.display = 'flex';
-                    document.getElementById('currentLoggedInEmail').innerText = data.email;
-                    if (data.is_admin) {
-                        document.getElementById('adminControlCard').style.display = 'block';
-                        document.getElementById('resetBtn').style.display = 'block';
-                    }
-                    registerDeviceWithServer(data.email);
+                    initAppSession(data.email, data.is_admin);
                 } else {
                     document.getElementById('authOverlay').style.display = 'flex';
                 }
             });
+        }
+
+        function initAppSession(email, isAdmin) {
+            document.getElementById('authOverlay').style.display = 'none';
+            document.getElementById('appContainer').style.display = 'flex';
+            document.getElementById('currentLoggedInEmail').innerText = email;
+            if (isAdmin) {
+                document.getElementById('adminControlCard').style.display = 'block';
+                document.getElementById('resetBtn').style.display = 'block';
+            }
+            registerDeviceWithServer(email);
+            loadChatHistory(currentRoom);
         }
 
         function loginUser() {
@@ -767,7 +759,7 @@ HTML_PAGE = """
         function openForgetPassword() {
             const email = prompt("Google Account (Email) ထည့်ပါ:");
             if (!email) return;
-            const newPassword = prompt("Password အသစ်အသစ် ထည့်ပါ:");
+            const newPassword = prompt("Password အသစ်ထည့်ပါ:");
             if (!newPassword) return;
 
             fetch('/reset_password_google', {
@@ -777,11 +769,8 @@ HTML_PAGE = """
             })
             .then(res => res.json())
             .then(data => {
-                if (data.success) {
-                    alert("Password အောင်မြင်စွာ ပြောင်းလဲပြီးပါပြီ။ Login ထပ်ဝင်ပါ။");
-                } else {
-                    alert("Error: " + data.error);
-                }
+                if (data.success) alert("Password အောင်မြင်စွာ ပြောင်းလဲပြီးပါပြီ။");
+                else alert("Error: " + data.error);
             });
         }
 
@@ -797,9 +786,7 @@ HTML_PAGE = """
             fetchDevices();
         }
 
-        socket.on('device_status_update', () => {
-            fetchDevices();
-        });
+        socket.on('device_status_update', () => { fetchDevices(); });
 
         function fetchDevices() {
             fetch('/get_devices')
@@ -811,7 +798,6 @@ HTML_PAGE = """
                     if (currentDev.status === 'pending' && currentDev.account !== 'officialwinmyat@gmail.com') {
                         document.getElementById('pendingOverlay').style.display = 'flex';
                         document.getElementById('overlayDeviceId').value = devId;
-                        document.getElementById('overlayStatus').innerText = "Status: Pending Approval ⏳";
                     } else if (currentDev.status === 'banned') {
                         document.getElementById('pendingOverlay').style.display = 'flex';
                         document.getElementById('overlayDeviceId').value = devId;
@@ -842,16 +828,48 @@ HTML_PAGE = """
             socket.emit('admin_device_action', {device_id: devId, action: action});
         }
 
-        fetch('/get_history')
-        .then(res => res.json())
-        .then(data => {
-            const stream = document.getElementById('historyStream');
-            stream.innerHTML = '';
-            data.reverse().forEach(item => appendMessageToStream(item, false));
-        });
+        // Room and Private Chat logic
+        function loadChatHistory(roomName) {
+            socket.emit('join_room', {room: roomName});
+            fetch(`/get_history?room=${roomName}`)
+            .then(res => res.json())
+            .then(data => {
+                const stream = document.getElementById('historyStream');
+                stream.innerHTML = '';
+                data.reverse().forEach(item => appendMessageToStream(item, false));
+            });
+        }
+
+        function openPrivateChatWith(otherUserEmail) {
+            const myEmail = document.getElementById('currentLoggedInEmail').innerText.trim().toLowerCase();
+            const targetEmail = otherUserEmail.trim().toLowerCase();
+            
+            if (myEmail === targetEmail) {
+                alert("သင်ကိုယ်တိုင်နှင့် Private Chat ဖွင့်၍မရပါ။");
+                return;
+            }
+
+            // Create unique sorted room key for both users (e.g. private_userA_userB)
+            let emails = [myEmail, targetEmail].sort();
+            currentRoom = `private_${emails[0]}_${emails[1]}`;
+            
+            document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${targetEmail}`;
+            document.getElementById('goToMainChatBtn').style.display = 'block';
+            
+            loadChatHistory(currentRoom);
+        }
+
+        function switchToMainChat() {
+            currentRoom = 'main_group';
+            document.getElementById('currentChatRoomTitle').innerText = "WMA QQ - Main Group Chat";
+            document.getElementById('goToMainChatBtn').style.display = 'none';
+            loadChatHistory(currentRoom);
+        }
 
         socket.on('broadcast_message', data => {
-            appendMessageToStream(data, true);
+            if (data.room === currentRoom) {
+                appendMessageToStream(data, true);
+            }
         });
 
         socket.on('message_deleted', data => {
@@ -864,16 +882,19 @@ HTML_PAGE = """
             const div = document.createElement('div');
             div.className = 'history-item';
             div.id = 'msg-box-' + item.id;
+            
+            let userHtml = `<span class="user-email-tag" onclick="openPrivateChatWith('${item.user}')">${item.user}</span>`;
             let contentHtml = '';
+            
             if (item.type === 'text') {
-                contentHtml = `<div><b>${item.user}:</b> ${item.content}</div>`;
+                contentHtml = `<div><b>${userHtml}:</b> ${item.content}</div>`;
             } else if (item.type === 'voice') {
-                contentHtml = `<div><b>${item.user} [Voice]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
+                contentHtml = `<div><b>${userHtml} [Voice]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
             } else if (item.type === 'file') {
                 if (item.filename && (item.filename.endsWith('.jpg') || item.filename.endsWith('.png') || item.filename.endsWith('.jpeg'))) {
-                    contentHtml = `<div><b>${item.user} [Image]:</b><br><img src="${item.content}" class="chat-image-preview"></div>`;
+                    contentHtml = `<div><b>${userHtml} [Image]:</b><br><img src="${item.content}" class="chat-image-preview"></div>`;
                 } else {
-                    contentHtml = `<div><b>${item.user} [File]:</b> <a href="${item.content}" download="${item.filename}" style="color:var(--accent-color);">${item.filename}</a></div>`;
+                    contentHtml = `<div><b>${userHtml} [File]:</b> <a href="${item.content}" download="${item.filename}" style="color:var(--accent-color);">${item.filename}</a></div>`;
                 }
             } else if (item.type === 'videocall_alert') {
                 contentHtml = `<div><b>🚨 Anime Video Call Alert:</b> ${item.user} has started a video call!
@@ -886,18 +907,19 @@ HTML_PAGE = """
             
             let actionButtons = '';
             if (item.type === 'text') {
-                actionButtons = `<div class="msg-actions"> <button onclick="copyTextContent('${encodeURIComponent(item.content)}')">Copy</button> <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button> </div>`;
+                actionButtons = `<div class="msg-actions"><button onclick="copyTextContent('${encodeURIComponent(item.content)}')">Copy</button><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button></div>`;
             } else if (item.type === 'voice' || item.type === 'file') {
-                actionButtons = `<div class="msg-actions"> <button onclick="saveToDevice('${item.content}', '${item.filename || 'media_file'}')">Save to Device</button> <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button> </div>`;
+                actionButtons = `<div class="msg-actions"><button onclick="saveToDevice('${item.content}', '${item.filename || 'media_file'}')">Save</button><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button></div>`;
             } else if (item.type === 'videocall_alert') {
-                actionButtons = `<div class="msg-actions"><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete Notification</button></div>`;
+                actionButtons = `<div class="msg-actions"><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button></div>`;
             }
+            
             div.innerHTML = contentHtml + (item.type !== 'videocall_alert' ? actionButtons : '') + `<div style="font-size:10px; color:#94a3b8; margin-top:4px;">${item.timestamp}</div>`;
             stream.appendChild(div);
             stream.scrollTop = stream.scrollHeight;
 
-            if (triggerNotification && 'Notification' in window && Notification.permission === 'granted') {
-                new Notification(`WMA QQ - New Message from ${item.user}`, {
+            if (triggerNotification && 'Notification' in window && Notification.permission === 'granted' && item.user !== document.getElementById('currentLoggedInEmail').innerText) {
+                new Notification(`WMA QQ - Message from ${item.user}`, {
                     body: item.type === 'text' ? item.content : `New ${item.type} received!`,
                     icon: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=120&q=80'
                 });
@@ -905,8 +927,7 @@ HTML_PAGE = """
         }
 
         function copyTextContent(encodedText) {
-            const text = decodeURIComponent(encodedText);
-            navigator.clipboard.writeText(text).then(() => alert("Copied to clipboard!"));
+            navigator.clipboard.writeText(decodeURIComponent(encodedText)).then(() => alert("Copied!"));
         }
 
         function saveToDevice(dataUrl, filename) {
@@ -919,7 +940,7 @@ HTML_PAGE = """
         }
 
         function deleteMessageItem(id) {
-            socket.emit('delete_message_item', {id: id});
+            socket.emit('delete_message_item', {id: id, room: currentRoom});
         }
 
         function toggleRecordVoice() {
@@ -940,7 +961,7 @@ HTML_PAGE = """
                         reader.readAsDataURL(audioBlob);
                     };
                     mediaRecorder.start();
-                    btn.innerText = "Stop Recording (Saving...)";
+                    btn.innerText = "Stop Recording...";
                     setTimeout(() => {
                         if (mediaRecorder && mediaRecorder.state === 'recording') {
                             mediaRecorder.stop();
@@ -957,7 +978,8 @@ HTML_PAGE = """
                     user: document.getElementById('currentLoggedInEmail').innerText,
                     type: 'voice',
                     content: window.tempVoiceData,
-                    store: '48 Hours'
+                    store: '48 Hours',
+                    room: currentRoom
                 });
                 document.getElementById('voiceOptions').style.display = 'none';
                 window.tempVoiceData = null;
@@ -982,7 +1004,8 @@ HTML_PAGE = """
                 user: document.getElementById('currentLoggedInEmail').innerText,
                 type: 'text',
                 content: content,
-                store: '48 Hours'
+                store: '48 Hours',
+                room: currentRoom
             });
             document.getElementById('textContent').value = '';
         }
@@ -1008,7 +1031,8 @@ HTML_PAGE = """
                 type: 'file',
                 content: selectedFileBase64,
                 filename: selectedFileName,
-                store: '48 Hours'
+                store: '48 Hours',
+                room: currentRoom
             });
             document.getElementById('fileInput').value = '';
             selectedFileBase64 = null;
@@ -1023,7 +1047,8 @@ HTML_PAGE = """
                 user: currentUser,
                 type: 'videocall_alert',
                 content: 'Triggered conference',
-                store: '48 Hours'
+                store: '48 Hours',
+                room: currentRoom
             });
             startConferenceUI(currentUser);
         }
@@ -1038,7 +1063,6 @@ HTML_PAGE = """
         function startConferenceUI(callerName) {
             document.getElementById('videoPopup').style.display = 'block';
             document.getElementById('callerInfo').innerText = `Conference Initiated by: ${callerName}`;
-            
             navigator.mediaDevices.getUserMedia({video: true, audio: true})
             .then(stream => {
                 localStream = stream;
@@ -1050,7 +1074,6 @@ HTML_PAGE = """
         socket.on('video_signal_relay', async data => {
             const senderId = data.sender;
             if (senderId === socket.id) return;
-
             if (data.type === 'ready_peer' || data.type === 'join_call') {
                 if (!localStream) return;
                 let pc = createPeerConnection(senderId);
@@ -1065,35 +1088,21 @@ HTML_PAGE = """
                 socket.emit('video_signal', {type: 'answer', answer: answer, sender: socket.id, target: senderId});
             } else if (data.type === 'answer' && data.target === socket.id) {
                 let pc = peerConnections[senderId];
-                if (pc) {
-                    await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-                }
+                if (pc) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
             } else if (data.type === 'candidate' && data.target === socket.id) {
                 let pc = peerConnections[senderId];
-                if (pc && data.candidate) {
-                    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-                }
+                if (pc && data.candidate) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
             }
         });
 
         function createPeerConnection(remoteSocketId) {
-            if (peerConnections[remoteSocketId]) {
-                return peerConnections[remoteSocketId];
-            }
-
+            if (peerConnections[remoteSocketId]) return peerConnections[remoteSocketId];
             let pc = new RTCPeerConnection(servers);
             peerConnections[remoteSocketId] = pc;
-
-            if (localStream) {
-                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-            }
-
+            if (localStream) localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
             pc.onicecandidate = event => {
-                if (event.candidate) {
-                    socket.emit('video_signal', {type: 'candidate', candidate: event.candidate, sender: socket.id, target: remoteSocketId});
-                }
+                if (event.candidate) socket.emit('video_signal', {type: 'candidate', candidate: event.candidate, sender: socket.id, target: remoteSocketId});
             };
-
             pc.ontrack = event => {
                 let gridContainer = document.getElementById('videoGridContainer');
                 let remoteVideoId = 'remoteVideo_' + remoteSocketId;
@@ -1102,25 +1111,20 @@ HTML_PAGE = """
                     let remoteBox = document.createElement('div');
                     remoteBox.className = 'video-box';
                     remoteBox.id = remoteVideoId;
-                    remoteBox.innerHTML = `<video autoplay playsinline></video><div>Participant Stream</div>`;
+                    remoteBox.innerHTML = `<video autoplay playsinline></video><div>Participant</div>`;
                     gridContainer.appendChild(remoteBox);
                     existingBox = remoteBox;
                 }
                 let videoElement = existingBox.querySelector('video');
-                if (videoElement && event.streams[0]) {
-                    videoElement.srcObject = event.streams[0];
-                }
+                if (videoElement && event.streams[0]) videoElement.srcObject = event.streams[0];
             };
-
             return pc;
         }
 
         function toggleMuteSpeaker() {
             if (!localStream) return;
             isSpeakerMuted = !isSpeakerMuted;
-            localStream.getAudioTracks().forEach(track => {
-                track.enabled = !isSpeakerMuted;
-            });
+            localStream.getAudioTracks().forEach(track => { track.enabled = !isSpeakerMuted; });
             const btn = document.getElementById('muteSpeakerBtn');
             btn.innerText = isSpeakerMuted ? "Unmute Speaker" : "Mute Speaker";
             btn.style.background = isSpeakerMuted ? "#dc2626" : "#ca8a04";
@@ -1129,9 +1133,7 @@ HTML_PAGE = """
         function toggleMuteCamera() {
             if (!localStream) return;
             isCameraMuted = !isCameraMuted;
-            localStream.getVideoTracks().forEach(track => {
-                track.enabled = !isCameraMuted;
-            });
+            localStream.getVideoTracks().forEach(track => { track.enabled = !isCameraMuted; });
             const btn = document.getElementById('muteCameraBtn');
             btn.innerText = isCameraMuted ? "Unmute Camera" : "Mute Camera";
             btn.style.background = isCameraMuted ? "#dc2626" : "#2563eb";
@@ -1142,32 +1144,24 @@ HTML_PAGE = """
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
             }
-            for (let id in peerConnections) {
-                peerConnections[id].close();
-            }
+            for (let id in peerConnections) { peerConnections[id].close(); }
             peerConnections = {};
-            
             let gridContainer = document.getElementById('videoGridContainer');
             gridContainer.innerHTML = '<div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>';
-            
             closePopup();
         }
 
-        function closePopup() {
-            document.getElementById('videoPopup').style.display = 'none';
-        }
+        function closePopup() { document.getElementById('videoPopup').style.display = 'none'; }
 
         function resetStorage() {
-            if (confirm("Are you sure you want to reset all storage (Live Chat and history)?")) {
-                socket.emit('reset_storage');
-            }
+            if (confirm("Are you sure you want to reset all storage?")) socket.emit('reset_storage');
         }
 
         socket.on('storage_reset', () => {
             document.getElementById('historyStream').innerHTML = '';
             alert("Storage has been reset.");
         });
-   </script>
+    </script>
 </body>
 </html>
 """
