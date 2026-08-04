@@ -3,7 +3,7 @@ import sqlite3
 import smtplib
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, render_template_string, session
+from flask import Flask, request, jsonify, render_template_string, session, send_file
 
 # Python compatibility fix for gevent
 import sys
@@ -92,6 +92,15 @@ def send_approval_email(device_id, google_account):
 @app.route('/')
 def index():
     return render_template_string(HTML_PAGE)
+
+# PWA Routes
+@app.route('/manifest.json')
+def serve_manifest():
+    return send_file('manifest.json', mimetype='application/manifest+json')
+
+@app.route('/sw.js')
+def serve_sw():
+    return send_file('sw.js', mimetype='application/javascript')
 
 @app.route('/signup', methods=['POST'])
 def signup():
@@ -365,6 +374,8 @@ HTML_PAGE = """
 <head>
     <title>WMA QQ - Chinese & Japanese Anime Spacial Web App</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#ec4899">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <style>
         :root {
@@ -571,6 +582,15 @@ HTML_PAGE = """
         let isSpeakerMuted = false;
         let isCameraMuted = false;
         let wakeLock = null;
+
+        // Register Service Worker for PWA
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => console.log('ServiceWorker registered! Scope:', reg.scope))
+                    .catch(err => console.log('ServiceWorker registration failed:', err));
+            });
+        }
 
         // Screen Wake Lock to keep screen awake / prevent screen off
         async function requestWakeLock() {
@@ -876,7 +896,6 @@ HTML_PAGE = """
             stream.appendChild(div);
             stream.scrollTop = stream.scrollHeight;
 
-            // Trigger Browser Notification for new incoming history/messages
             if (triggerNotification && 'Notification' in window && Notification.permission === 'granted') {
                 new Notification(`WMA QQ - New Message from ${item.user}`, {
                     body: item.type === 'text' ? item.content : `New ${item.type} received!`,
@@ -997,7 +1016,6 @@ HTML_PAGE = """
             document.getElementById('sendFileBtn').style.opacity = '0.5';
         }
 
-        // WebRTC & Video Conference Logic
         function triggerVideoCall() {
             const currentUser = document.getElementById('currentLoggedInEmail').innerText;
             socket.emit('trigger_video_call', {user: currentUser});
