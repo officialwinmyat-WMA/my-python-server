@@ -1,8 +1,7 @@
 import os
 import sqlite3
-import smtplib
 import random
-from email.mime.text import MIMEText
+import requests
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template_string, session, send_file
 
@@ -75,43 +74,52 @@ def clean_expired_history():
 
 def send_verification_email(recipient_email, code):
     try:
-        sender_email = os.environ.get("SMTP_EMAIL", "officialwinmyat@gmail.com")
-        sender_password = os.environ.get("SMTP_PASSWORD", "")
-        if not sender_password:
+        resend_api_key = os.environ.get("RESEND_API_KEY", "")
+        if not resend_api_key:
+            print("Resend API Key not found")
             return False
-        msg = MIMEText(f"Your WMA QQ Verification Code is: {code}\n\nPlease enter this 6-digit code to complete your registration.")
-        msg['Subject'] = f"WMA QQ - Verification Code: {code}"
-        msg['From'] = sender_email
-        msg['To'] = recipient_email
         
-        server = smtplib.SMTP('smtp.gmail.com', 587, timeout=10)
-        server.starttls()
-        server.login(sender_email, sender_password)
-        server.sendmail(sender_email, [recipient_email], msg.as_string())
-        server.quit()
-        return True
+        headers = {
+            "Authorization": f"Bearer {resend_api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "from": "WMA QQ <onboarding@resend.dev>",
+            "to": [recipient_email],
+            "subject": f"WMA QQ - Verification Code: {code}",
+            "html": f"<p>Your WMA QQ Verification Code is: <strong>{code}</strong></p><p>Please enter this 6-digit code to complete your registration.</p>"
+        }
+        
+        response = requests.post("https://api.resend.com/emails", json=payload, headers=headers, timeout=10)
+        if response.status_code in [200, 201]:
+            return True
+        else:
+            print("Resend API error:", response.text)
+            return False
     except Exception as e:
-        print("Email sending error (Render Free Tier blocks SMTP port 587):", e)
+        print("Email sending error via Resend:", e)
         return False
 
 def send_approval_email(device_id, google_account):
     try:
-        sender_email = os.environ.get("SMTP_EMAIL", "officialwinmyat@gmail.com")
-        sender_password = os.environ.get("SMTP_PASSWORD", "")
-        if not sender_password:
+        resend_api_key = os.environ.get("RESEND_API_KEY", "")
+        if not resend_api_key:
             return
-        msg = MIMEText(f"New Device Access Request:\n\nDevice ID: {device_id}\nGoogle Account: {google_account}\n\nPlease go to your dashboard to approve or ban this device.")
-        msg['Subject'] = f"WMA QQ - New Device Pending Approval: {device_id}"
-        msg['From'] = sender_email
-        msg['To'] = "officialwinmyat@gmail.com"
         
-        server = smtplib.SMTP('smtp.gmail.com', 587, timeout=10)
-        server.starttls()
-        server.login(sender_email, sender_password)
-        server.sendmail(sender_email, ["officialwinmyat@gmail.com"], msg.as_string())
-        server.quit()
+        headers = {
+            "Authorization": f"Bearer {resend_api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "from": "WMA QQ <onboarding@resend.dev>",
+            "to": ["officialwinmyat@gmail.com"],
+            "subject": f"WMA QQ - New Device Pending Approval: {device_id}",
+            "html": f"<p>New Device Access Request:</p><p>Device ID: <b>{device_id}</b></p><p>Google Account: <b>{google_account}</b></p><p>Please go to your dashboard to approve or ban this device.</p>"
+        }
+        
+        requests.post("https://api.resend.com/emails", json=payload, headers=headers, timeout=10)
     except Exception as e:
-        print("Email notification error:", e)
+        print("Email notification error via Resend:", e)
 
 @app.route('/')
 def index():
@@ -161,7 +169,7 @@ def signup():
         
         sent = send_verification_email(email, code)
         if not sent and email != 'officialwinmyat@gmail.com':
-            return jsonify({"success": False, "error": "Verification Email ပို့၍ မရပါ။ (Render Free Tier blocks SMTP) ခဏကြာမှ ထပ်ကြိုးစားပါ။"})
+            return jsonify({"success": False, "error": "Verification Email ပို့၍ မရပါ။ ခဏကြာမှ ထပ်ကြိုးစားပါ။"})
             
         return jsonify({"success": True, "requires_verification": True})
     except Exception as e:
