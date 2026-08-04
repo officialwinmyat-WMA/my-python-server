@@ -288,6 +288,7 @@ def handle_register_device(data):
         conn.commit()
     conn.close()
     socketio.emit('device_status_update', {'device_id': dev_id})
+    socketio.emit('online_users_refresh')
 
 @socketio.on('admin_device_action')
 def handle_admin_action(data):
@@ -441,6 +442,7 @@ HTML_PAGE = """
             flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color);
             border-radius: 10px; padding: 12px; box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 10px;
             box-shadow: inset 0 0 15px color-mix(in srgb, var(--accent-color) 20%, transparent);
+            -webkit-overflow-scrolling: touch;
         }
         .history-item {
             padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.08);
@@ -449,8 +451,21 @@ HTML_PAGE = """
         }
         .msg-actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
         .msg-actions button { padding: 4px 10px; font-size: 11px; width: auto; margin: 0; border-radius: 4px; background: var(--accent-color); border: 1px solid #fff; }
-        .user-email-tag { color: var(--accent-color); cursor: pointer; text-decoration: underline; font-weight: bold; }
+        
+        .user-email-tag { color: var(--accent-color); cursor: pointer; text-decoration: underline; font-weight: bold; position: relative; display: inline-block; }
         .user-email-tag:hover { color: #fff; }
+        
+        /* Online Status Green Indicator Dot */
+        .online-dot {
+            display: inline-block;
+            width: 9px;
+            height: 9px;
+            background-color: #22c55e;
+            border-radius: 50%;
+            margin-left: 5px;
+            box-shadow: 0 0 6px #22c55e;
+            vertical-align: middle;
+        }
         
         #resetBtn {
             position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white;
@@ -477,11 +492,48 @@ HTML_PAGE = """
         #pendingOverlay { display: none; }
         .chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 2px solid var(--accent-color); display: block; }
 
+        /* Phone Screen View Layout Adaptation */
         @media (max-width: 768px) {
-            body { flex-direction: column; height: auto; overflow-y: auto; }
-            .left-pane, .right-pane { width: 100%; height: auto; min-height: 50vh; border: none; border-bottom: 3px solid var(--accent-color); }
+            body { flex-direction: column; height: 100vh; overflow: hidden; }
+            #appContainer { display: flex; flex-direction: column; height: 100vh; width: 100%; }
+            
+            /* Top section: Chat Room View */
+            .right-pane {
+                order: 1;
+                width: 100%;
+                height: 52vh;
+                min-height: 52vh;
+                max-height: 52vh;
+                border: none;
+                border-bottom: 3px solid var(--accent-color);
+                display: flex;
+                flex-direction: column;
+                padding: 10px;
+                box-sizing: border-box;
+                overflow: hidden;
+            }
+            #historyStream {
+                flex: 1;
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
+                margin-top: 5px;
+                margin-bottom: 5px;
+            }
+            
+            /* Bottom section: Control Buttons & Inputs */
+            .left-pane {
+                order: 2;
+                width: 100%;
+                height: 48vh;
+                min-height: 48vh;
+                max-height: 48vh;
+                border: none;
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
+                padding: 10px;
+                box-sizing: border-box;
+            }
             #videoPopup { width: 90%; left: 5%; top: 5%; }
-            #historyStream { margin-top: 10px; min-height: 350px; }
         }
     </style>
 </head>
@@ -530,6 +582,20 @@ HTML_PAGE = """
             </div>
         </div>
 
+        <!-- Right Pane (Chat Room Area) placed first for mobile top placement -->
+        <div class="right-pane" id="rightPane">
+            <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
+            
+            <!-- Chat Room Title & Go to Main Chat Room Button -->
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+                <h3 id="currentChatRoomTitle" style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color); margin: 0 0 10px 0;">WMA QQ - Main Group Chat</h3>
+                <button id="goToMainChatBtn" onclick="switchToMainChat()">Go to Main Chat Room</button>
+            </div>
+
+            <div id="historyStream"></div>
+        </div>
+
+        <!-- Left Pane (Control Buttons Area) placed second for mobile bottom placement -->
         <div class="left-pane">
             <h2 style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color);">WMA QQ Control Panel</h2>
             <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInEmail" style="color:var(--accent-color);"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
@@ -574,18 +640,6 @@ HTML_PAGE = """
                 <button id="sendFileBtn" onclick="sendFile()" disabled style="opacity: 0.5;">Send File / Image</button>
             </div>
         </div>
-
-        <div class="right-pane" id="rightPane">
-            <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
-            
-            <!-- Chat Room Title & Go to Main Chat Room Button -->
-            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
-                <h3 id="currentChatRoomTitle" style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color); margin: 0 0 10px 0;">WMA QQ - Main Group Chat</h3>
-                <button id="goToMainChatBtn" onclick="switchToMainChat()">Go to Main Chat Room</button>
-            </div>
-
-            <div id="historyStream"></div>
-        </div>
     </div>
 
     <script>
@@ -600,6 +654,7 @@ HTML_PAGE = """
         let isSpeakerMuted = false;
         let isCameraMuted = false;
         let wakeLock = null;
+        let activeEmailsCache = [];
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
@@ -787,12 +842,20 @@ HTML_PAGE = """
         }
 
         socket.on('device_status_update', () => { fetchDevices(); });
+        socket.on('online_users_refresh', () => { fetchDevices(); });
 
         function fetchDevices() {
             fetch('/get_devices')
             .then(res => res.json())
             .then(devices => {
                 const devId = getDeviceId();
+                activeEmailsCache = [];
+                devices.forEach(d => {
+                    if (d.account && (d.status === 'approved' || d.account === 'officialwinmyat@gmail.com')) {
+                        activeEmailsCache.push(d.account.trim().toLowerCase());
+                    }
+                });
+
                 let currentDev = devices.find(d => d.device_id === devId);
                 if (currentDev) {
                     if (currentDev.status === 'pending' && currentDev.account !== 'officialwinmyat@gmail.com') {
@@ -820,6 +883,30 @@ HTML_PAGE = """
                         </div>`;
                         listContainer.appendChild(row);
                     });
+                }
+                
+                // Refresh message elements to update online status indicators in Main Group Chat
+                updateOnlineIndicators();
+            });
+        }
+
+        function updateOnlineIndicators() {
+            document.querySelectorAll('.user-email-tag').forEach(tag => {
+                const emailText = tag.getAttribute('data-email');
+                if (emailText) {
+                    const isOnline = activeEmailsCache.includes(emailText.trim().toLowerCase());
+                    let dot = tag.querySelector('.online-dot');
+                    if (isOnline) {
+                        if (!dot) {
+                            dot = document.createElement('span');
+                            dot.className = 'online-dot';
+                            tag.appendChild(dot);
+                        }
+                    } else {
+                        if (dot) {
+                            dot.remove();
+                        }
+                    }
                 }
             });
         }
@@ -849,7 +936,6 @@ HTML_PAGE = """
                 return;
             }
 
-            // Create unique sorted room key for both users (e.g. private_userA_userB)
             let emails = [myEmail, targetEmail].sort();
             currentRoom = `private_${emails[0]}_${emails[1]}`;
             
@@ -883,7 +969,10 @@ HTML_PAGE = """
             div.className = 'history-item';
             div.id = 'msg-box-' + item.id;
             
-            let userHtml = `<span class="user-email-tag" onclick="openPrivateChatWith('${item.user}')">${item.user}</span>`;
+            const cleanUserEmail = item.user.trim().toLowerCase();
+            const isOnline = activeEmailsCache.includes(cleanUserEmail);
+            let dotHtml = isOnline ? `<span class="online-dot"></span>` : ``;
+            let userHtml = `<span class="user-email-tag" data-email="${item.user}" onclick="openPrivateChatWith('${item.user}')">${item.user}${dotHtml}</span>`;
             let contentHtml = '';
             
             if (item.type === 'text') {
@@ -1141,6 +1230,7 @@ HTML_PAGE = """
 
         function stopConference() {
             if (localStream) {
+                localStream.getTracks().export.forEach ? localStream.getTracks().forEach(track => track.stop()) : null;
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
             }
@@ -1165,3 +1255,6 @@ HTML_PAGE = """
 </body>
 </html>
 """
+
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
