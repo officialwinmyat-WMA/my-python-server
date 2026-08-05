@@ -169,7 +169,7 @@ def signup():
         
         sent = send_verification_email(email, code)
         
-        if not sent and email != 'officialwinmyat@gmail.com':
+        if not sent:
             print(f"CRITICAL: Failed to send email to {email}. Verification Code is: {code}")
             
         return jsonify({"success": True, "requires_verification": True})
