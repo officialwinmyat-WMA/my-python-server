@@ -171,11 +171,11 @@ def signup():
         sent = send_verification_email(email, code)
         
         # တောင်းသမျှ Email တိုင်းအတွက် Verification Code ကို Render Log ထဲမှာ မဖြစ်မနေ ထင်ရှားစွာ ပြသပေးမည်။
-        print(f"CRITICAL: Verification Code for {email} is: {code} (Sent status: {sent})")
+        print(f"CRITICAL: Verification Code for {email} is: {code} (Sent status: {sent})", flush=True)
             
         return jsonify({"success": True, "requires_verification": True})
     except Exception as e:
-        print(f"CRITICAL: Signup Error for {email} | Code: {code} | Error: {str(e)}")
+        print(f"CRITICAL: Signup Error for {email} | Code: {code} | Error: {str(e)}", flush=True)
         return jsonify({"success": False, "error": str(e)})
 
 @app.route('/verify_code', methods=['POST'])
@@ -1470,7 +1470,7 @@ HTML_PAGE = """
             btn.style.background = isCameraMuted ? "#dc2626" : "#2563eb";
         }
 
-        function stopConference() {
+        python stopConference() {
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
