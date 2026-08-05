@@ -5,7 +5,7 @@ import requests
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template_string, session, send_file
 
-# Python compatibility fix for gevent (Disabled patch for ssl to prevent recursion error)
+# Python compatibility fix for gevent (Completely disabled ssl patching to prevent recursion error)
 import sys
 from gevent import monkey
 try:
@@ -167,10 +167,11 @@ def signup():
         conn.commit()
         conn.close()
         
+        # Email ပို့ဆောင်ခြင်း
         sent = send_verification_email(email, code)
         
-        # မည်သည့် Email (officialkyukyu@gmail.com သို့မဟုတ် အခြား) မဆို အမြဲတမ်း Log ထဲသို့ Verification Code ထင်ရှားစွာ ထုတ်ပေးပါမည်။
-        print(f"CRITICAL: Failed or Sent Email to {email}. Verification Code is: {code}")
+        # တောင်းသမျှ Email တိုင်းအတွက် Verification Code ကို Render Log ထဲမှာ မဖြစ်မနေ ထင်ရှားစွာ ပြသပေးမည်။
+        print(f"CRITICAL: Verification Code for {email} is: {code} (Sent status: {sent})")
             
         return jsonify({"success": True, "requires_verification": True})
     except Exception as e:
@@ -649,7 +650,7 @@ HTML_PAGE = """
 
     <div id="verifyOverlay">
         <h2 style="color: var(--accent-color);">Email Verification Required</h2>
-        <p style="max-width: 400px; color: #cbd5e1; margin: 15px 0;">သင့် Email ထံသို့ ပို့လိုက်သော ဂဏန်း ၆ လုံးပါ Verification Code ကို ထည့်ပါ</p>
+        <p style="max-width: 400px; color: #cbd5e1; margin: 15px 0;">သင့် Email ထံသို့ ပို့လိုက်သော ဂဏန်း ၆ လုံးပါ Verification Code ကို ထည့်ပါ (သို့မဟုတ် Render Log ထဲတွင် ကြည့်ပါ)</p>
         <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px;">
             <input type="text" id="verificationCodeInput" placeholder="6-digit code" maxlength="6" style="text-align:center; font-size:18px; letter-spacing:4px; font-weight:bold;">
             <button onclick="submitVerificationCode()" style="background: var(--accent-color); margin-top: 10px;">Verify Code</button>
