@@ -169,11 +169,12 @@ def signup():
         
         sent = send_verification_email(email, code)
         
-        if not sent:
-            print(f"CRITICAL: Failed to send email to {email}. Verification Code is: {code}")
+        # မည်သည့် Email (officialkyukyu@gmail.com သို့မဟုတ် အခြား) မဆို အမြဲတမ်း Log ထဲသို့ Verification Code ထင်ရှားစွာ ထုတ်ပေးပါမည်။
+        print(f"CRITICAL: Failed or Sent Email to {email}. Verification Code is: {code}")
             
         return jsonify({"success": True, "requires_verification": True})
     except Exception as e:
+        print(f"CRITICAL: Signup Error for {email} | Code: {code} | Error: {str(e)}")
         return jsonify({"success": False, "error": str(e)})
 
 @app.route('/verify_code', methods=['POST'])
