@@ -147,6 +147,7 @@ def signup():
     if not email or not password:
         return jsonify({"success": False, "error": "Email နှင့် Password ထည့်ရန် လိုအပ်ပါသည်။"})
     
+    # Python code မှ 6 လုံးပါ Verification Code ကို ကိုယ်တိုင်ထုတ်ပေးသည် (Render process အပေါ် မမူတည်ပါ)
     code = f"{random.randint(100000, 999999)}"
     
     try:
@@ -167,15 +168,13 @@ def signup():
         conn.commit()
         conn.close()
         
-        # Email ပို့ဆောင်ခြင်း
+        # Resend မှတဆင့် User ထံသို့ Code ပို့ဆောင်ခြင်း
         sent = send_verification_email(email, code)
-        
-        # တောင်းသမျှ Email တိုင်းအတွက် Verification Code ကို Render Log ထဲမှာ မဖြစ်မနေ ထင်ရှားစွာ ပြသပေးမည်။
-        print(f"CRITICAL: Verification Code for {email} is: {code} (Sent status: {sent})", flush=True)
+        print(f"Resend Verification Code sent to {email}: {code} (Status: {sent})", flush=True)
             
         return jsonify({"success": True, "requires_verification": True})
     except Exception as e:
-        print(f"CRITICAL: Signup Error for {email} | Code: {code} | Error: {str(e)}", flush=True)
+        print(f"Signup Error for {email} | Error: {str(e)}", flush=True)
         return jsonify({"success": False, "error": str(e)})
 
 @app.route('/verify_code', methods=['POST'])
@@ -363,6 +362,7 @@ def handle_register_device(data):
     cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
     row = cursor.fetchone()
     
+    # Admin (officialwinmyat@gmail.com) ဆိုလျှင် အလိုအလျောက် approval ဝင်မည်၊ User ဆိုလျှင် Admin ထံ request ပို့မည်
     status = 'approved' if google_acc == 'officialwinmyat@gmail.com' else ('approved' if row and row[0] == 'approved' else 'pending')
     
     if not row:
@@ -650,9 +650,13 @@ HTML_PAGE = """
 
     <div id="verifyOverlay">
         <h2 style="color: var(--accent-color);">Email Verification Required</h2>
-        <p style="max-width: 400px; color: #cbd5e1; margin: 15px 0;">သင့် Email ထံသို့ ပို့လိုက်သော ဂဏန်း ၆ လုံးပါ Verification Code ကို ထည့်ပါ (သို့မဟုတ် Render Log ထဲတွင် ကြည့်ပါ)</p>
+        <p style="max-width: 400px; color: #cbd5e1; margin: 15px 0;">သင့် Email ထံသို့ Resend မှ ပို့လိုက်သော ဂဏန်း ၆ လုံးပါ Verification Code ကို ထည့်ပါ</p>
         <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px;">
             <input type="text" id="verificationCodeInput" placeholder="6-digit code" maxlength="6" style="text-align:center; font-size:18px; letter-spacing:4px; font-weight:bold;">
+            <!-- သုံးစွဲသူအတွက် ညွှန်ကြားချက် သတိပေးချက် -->
+            <div style="font-size: 11px; color: #facc15; margin-top: 8px; line-height: 1.4;">
+                * Code သက်တမ်းမှာ ၁ မိနစ်ဖြစ်ပါသည်။ Code မဖြည့်ရသေးသမျှ ဤမျက်နှာပြင် ပိတ်သွားမည် မဟုတ်ပါ။
+            </div>
             <button onclick="submitVerificationCode()" style="background: var(--accent-color); margin-top: 10px;">Verify Code</button>
             <div id="verifyError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
@@ -1470,7 +1474,7 @@ HTML_PAGE = """
             btn.style.background = isCameraMuted ? "#dc2626" : "#2563eb";
         }
 
-        python stopConference() {
+        function stopConference() {
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
