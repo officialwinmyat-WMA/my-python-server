@@ -53,7 +53,9 @@ def init_db():
             device_id TEXT,
             remember_token TEXT,
             verification_code TEXT,
-            is_verified INTEGER DEFAULT 0
+            is_verified INTEGER DEFAULT 0,
+            account_duration TEXT DEFAULT '3 months',
+            signup_time DATETIME
         )
     ''')
     conn.commit()
@@ -72,55 +74,6 @@ def clean_expired_history():
     except Exception as e:
         print("Cleanup error:", e)
 
-def send_verification_email(recipient_email, code):
-    try:
-        resend_api_key = os.environ.get("RESEND_API_KEY", "")
-        if not resend_api_key:
-            print("Resend API Key not found")
-            return False
-        
-        headers = {
-            "Authorization": f"Bearer {resend_api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "from": "WMA QQ <onboarding@resend.dev>",
-            "to": [recipient_email],
-            "subject": f"WMA QQ - Verification Code: {code}",
-            "html": f"<p>Your WMA QQ Verification Code is: <strong>{code}</strong></p><p>Please enter this 6-digit code to complete your registration.</p>"
-        }
-        
-        response = requests.post("https://api.resend.com/emails", json=payload, headers=headers, timeout=10)
-        if response.status_code in [200, 201]:
-            return True
-        else:
-            print("Resend API error response:", response.text)
-            return False
-    except Exception as e:
-        print("Email sending error via Resend:", e)
-        return False
-
-def send_approval_email(device_id, google_account):
-    try:
-        resend_api_key = os.environ.get("RESEND_API_KEY", "")
-        if not resend_api_key:
-            return
-        
-        headers = {
-            "Authorization": f"Bearer {resend_api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "from": "WMA QQ <onboarding@resend.dev>",
-            "to": ["officialwinmyat@gmail.com"],
-            "subject": f"WMA QQ - New Device Pending Approval: {device_id}",
-            "html": f"<p>New Device Access Request:</p><p>Device ID: <b>{device_id}</b></p><p>Google Account: <b>{google_account}</b></p><p>Please go to your dashboard to approve or ban this device.</p>"
-        }
-        
-        requests.post("https://api.resend.com/emails", json=payload, headers=headers, timeout=10)
-    except Exception as e:
-        print("Email notification error via Resend:", e)
-
 @app.route('/')
 def index():
     return render_template_string(HTML_PAGE)
@@ -137,6 +90,22 @@ def serve_manifest():
 def serve_sw():
     return send_file('sw.js', mimetype='application/javascript')
 
+@app.route('/admin_login', methods=['POST'])
+def admin_login():
+    data = request.json
+    email = data.get('email', '').strip().lower()
+    password = data.get('password', '')
+    master_key = data.get('master_key', '').strip()
+    
+    # Universal code (master key) check on render server
+    expected_master_key = os.environ.get("UNIVERSAL_MASTER_KEY", "852456")
+    
+    if email == 'officialwinmyat@gmail.com' and master_key == expected_master_key:
+        session['user_email'] = email
+        session['is_admin'] = True
+        return jsonify({"success": True, "is_admin": True})
+    return jsonify({"success": False, "error": "Master Key သို့မဟုတ် Admin အချက်အလက် မှားယွင်းနေပါသည်။"})
+
 @app.route('/signup', methods=['POST'])
 def signup():
     data = request.json
@@ -147,30 +116,32 @@ def signup():
     if not email or not password:
         return jsonify({"success": False, "error": "Email နှင့် Password ထည့်ရန် လိုအပ်ပါသည်။"})
     
-    # Python code မှ 6 လုံးပါ Verification Code ကို ကိုယ်တိုင်ထုတ်ပေးသည် (Render process အပေါ် မမူတည်ပါ)
-    code = f"{random.randint(100000, 999999)}"
-    
     try:
         conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
+        
+        # Check if banned
+        cursor.execute('SELECT status FROM devices WHERE device_id = ?', (device_id,))
+        dev_row = cursor.fetchone()
+        if dev_row and dev_row[0] == 'banned':
+            conn.close()
+            return jsonify({"success": False, "error": "ဤ Device အား Ban ထားပါသဖြင့် Sign up လုပ်၍ မရပါ။"})
+            
         cursor.execute('SELECT id, is_verified FROM users WHERE email = ?', (email,))
         existing = cursor.fetchone()
         
+        now = datetime.now()
         if existing:
             if existing[1] == 1:
                 conn.close()
                 return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်ရှိပြီးသား ဖြစ်ပါသည်။ Login ဝင်ပါ။"})
             else:
-                cursor.execute('UPDATE users SET password = ?, device_id = ?, verification_code = ? WHERE email = ?', (password, device_id, code, email))
+                cursor.execute('UPDATE users SET password = ?, device_id = ?, signup_time = ? WHERE email = ?', (password, device_id, now, email))
         else:
-            cursor.execute('INSERT INTO users (email, password, device_id, verification_code, is_verified) VALUES (?, ?, ?, ?, 0)', (email, password, device_id, code))
+            cursor.execute('INSERT INTO users (email, password, device_id, is_verified, account_duration, signup_time) VALUES (?, ?, ?, 0, '3 months', ?)', (email, password, device_id, now))
         
         conn.commit()
         conn.close()
-        
-        # Resend မှတဆင့် User ထံသို့ Code ပို့ဆောင်ခြင်း
-        sent = send_verification_email(email, code)
-        print(f"Resend Verification Code sent to {email}: {code} (Status: {sent})", flush=True)
             
         return jsonify({"success": True, "requires_verification": True})
     except Exception as e:
@@ -185,21 +156,32 @@ def verify_code():
     
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT verification_code FROM users WHERE email = ?', (email,))
+    # Check signup time within 15 minutes and matching admin-assigned verification code from devices/users table
+    cursor.execute('SELECT signup_time, verification_code FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
     
-    if row and row[0] == code:
-        cursor.execute('UPDATE users SET is_verified = 1, verification_code = NULL WHERE email = ?', (email,))
-        conn.commit()
-        conn.close()
+    if row:
+        signup_time_str = row[0]
+        assigned_code = row[1]
         
-        session['user_email'] = email
-        is_admin = (email == 'officialwinmyat@gmail.com')
-        session['is_admin'] = is_admin
-        return jsonify({"success": True, "is_admin": is_admin})
-    else:
-        conn.close()
-        return jsonify({"success": False, "error": "Verification Code မှားယွင်းနေပါသည်။"})
+        if signup_time_str:
+            signup_time = datetime.strptime(signup_time_str, '%Y-%m-%d %H:%M:%S.%f' if '.' in signup_time_str else '%Y-%m-%d %H:%M:%S')
+            if datetime.now() - signup_time > timedelta(minutes=15):
+                conn.close()
+                return jsonify({"success": False, "error": "Verification သက်တမ်း ၁ မိနစ်/၁၅ မိနစ် ကျော်လွန်သွားပါပြီ။ Code ထပ်တောင်းပါ။"})
+        
+        if assigned_code and assigned_code == code:
+            cursor.execute('UPDATE users SET is_verified = 1 WHERE email = ?', (email,))
+            conn.commit()
+            conn.close()
+            
+            session['user_email'] = email
+            is_admin = (email == 'officialwinmyat@gmail.com')
+            session['is_admin'] = is_admin
+            return jsonify({"success": True, "is_admin": is_admin})
+            
+    conn.close()
+    return jsonify({"success": False, "error": "Verification Code မှားယွင်းနေပါသည် သို့မဟုတ် Admin မှ မချပေးသေးပါ။"})
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -211,16 +193,24 @@ def login():
     
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT password, is_verified FROM users WHERE email = ?', (email,))
+    
+    # Check if device is banned
+    cursor.execute('SELECT status FROM devices WHERE device_id = ?', (device_id,))
+    dev_row = cursor.fetchone()
+    if dev_row and dev_row[0] == 'banned':
+        conn.close()
+        return jsonify({"success": False, "error": "ဤ Device အား Ban ထားပါသည်။"})
+
+    cursor.execute('SELECT password, is_verified, device_id, account_duration FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
     
     if row:
-        stored_password, is_verified = row
+        stored_password, is_verified, stored_device_id, account_duration = row
         if is_verified == 0:
             conn.close()
             return jsonify({"success": False, "error": "အကောင့်ကို Code ဖြင့် အတည်ပြုပြီးသား မရှိသေးပါ။"})
             
-        if stored_password == password:
+        if stored_password == password and stored_device_id == device_id:
             session['user_email'] = email
             is_admin = (email == 'officialwinmyat@gmail.com')
             session['is_admin'] = is_admin
@@ -228,14 +218,14 @@ def login():
             token = ""
             if remember:
                 token = f"token_{email}_{device_id}"
-                cursor.execute('UPDATE users SET remember_token = ?, device_id = ? WHERE email = ?', (token, device_id, email))
+                cursor.execute('UPDATE users SET remember_token = ? WHERE email = ?', (token, email))
                 conn.commit()
             
             conn.close()
-            return jsonify({"success": True, "is_admin": is_admin, "remember_token": token})
+            return jsonify({"success": True, "is_admin": is_admin, "remember_token": token, "account_duration": account_duration})
         else:
             conn.close()
-            return jsonify({"success": False, "error": "Password မှားယွင်းနေပါသည်။"})
+            return jsonify({"success": False, "error": "Password သို့မဟုတ် Device ID မမှန်ကန်ပါ။"})
     else:
         conn.close()
         return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်မရှိပါ။"})
@@ -252,7 +242,7 @@ def check_remember():
         
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT remember_token, device_id FROM users WHERE email = ?', (email,))
+    cursor.execute('SELECT remember_token, device_id, account_duration FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
     conn.close()
     
@@ -260,7 +250,7 @@ def check_remember():
         session['user_email'] = email
         is_admin = (email == 'officialwinmyat@gmail.com')
         session['is_admin'] = is_admin
-        return jsonify({"logged_in": True, "email": email, "is_admin": is_admin})
+        return jsonify({"logged_in": True, "email": email, "is_admin": is_admin, "account_duration": row[2]})
     
     return jsonify({"logged_in": False})
 
@@ -298,12 +288,73 @@ def check_session():
         email = session['user_email']
         is_admin = (email == 'officialwinmyat@gmail.com')
         session['is_admin'] = is_admin
+        
+        conn = sqlite3.connect('wma_qq_private.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT account_duration FROM users WHERE email = ?', (email,))
+        row = cursor.fetchone()
+        conn.close()
+        duration = row[0] if row else '3 months'
+        
         return jsonify({
             "logged_in": True,
             "email": email,
-            "is_admin": is_admin
+            "is_admin": is_admin,
+            "account_duration": duration
         })
     return jsonify({"logged_in": False})
+
+@app.route('/get_recent_signups', methods=['GET'])
+def get_recent_signups():
+    if session.get('user_email') != 'officialwinmyat@gmail.com':
+        return jsonify([])
+    
+    conn = sqlite3.connect('wma_qq_private.db')
+    cursor = conn.cursor()
+    fifteen_mins_ago = datetime.now() - timedelta(minutes=15)
+    cursor.execute('SELECT email, device_id, verification_code, account_duration, signup_time FROM users WHERE signup_time >= ?', (fifteen_mins_ago,))
+    rows = cursor.fetchall()
+    conn.close()
+    
+    signups = []
+    for r in rows:
+        signups.append({
+            "email": r[0],
+            "device_id": r[1],
+            "verification_code": r[2] or '',
+            "account_duration": r[3] or '3 months',
+            "signup_time": r[4]
+        })
+    return jsonify(signups)
+
+@app.route('/admin_update_user_settings', methods=['POST'])
+def admin_update_user_settings():
+    if session.get('user_email') != 'officialwinmyat@gmail.com':
+        return jsonify({"success": False, "error": "Unauthorized"})
+        
+    data = request.json
+    email = data.get('email', '').strip().lower()
+    code = data.get('verification_code', '').strip()
+    duration = data.get('account_duration', '3 months')
+    action = data.get('action', '')
+    
+    conn = sqlite3.connect('wma_qq_private.db')
+    cursor = conn.cursor()
+    
+    if action == 'remove':
+        cursor.execute('DELETE FROM users WHERE email = ?', (email,))
+    elif action == 'ban':
+        cursor.execute('UPDATE users SET verification_code = NULL WHERE email = ?', (email,))
+        cursor.execute('UPDATE devices SET status = 'banned' WHERE google_account = ?', (email,))
+    else:
+        if code:
+            cursor.execute('UPDATE users SET verification_code = ?, account_duration = ? WHERE email = ?', (code, duration, email))
+        else:
+            cursor.execute('UPDATE users SET account_duration = ? WHERE email = ?', (duration, email))
+            
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True})
 
 @app.route('/get_devices', methods=['GET'])
 def get_devices():
@@ -362,14 +413,11 @@ def handle_register_device(data):
     cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
     row = cursor.fetchone()
     
-    # Admin (officialwinmyat@gmail.com) ဆိုလျှင် အလိုအလျောက် approval ဝင်မည်၊ User ဆိုလျှင် Admin ထံ request ပို့မည်
     status = 'approved' if google_acc == 'officialwinmyat@gmail.com' else ('approved' if row and row[0] == 'approved' else 'pending')
     
     if not row:
         cursor.execute('INSERT INTO devices (device_id, google_account, status, last_active) VALUES (?, ?, ?, ?)', (dev_id, google_acc, status, datetime.now()))
         conn.commit()
-        if status == 'pending' and google_acc != 'officialwinmyat@gmail.com':
-            send_approval_email(dev_id, google_acc)
     else:
         cursor.execute('UPDATE devices SET google_account = ?, status = ?, last_active = ? WHERE device_id = ?', (google_acc, status, datetime.now(), dev_id))
         conn.commit()
@@ -583,7 +631,6 @@ HTML_PAGE = """
             font-weight: bold;
             box-shadow: 0 0 10px var(--accent-color);
             border: 1px solid #fff;
-            animation: fadeInOut 2s ease;
         }
 
         #resetBtn {
@@ -603,36 +650,29 @@ HTML_PAGE = """
         video { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; background: #000; }
         .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
         #appContainer { display: none; width: 100%; height: 100vh; }
-        #authOverlay, #pendingOverlay, #verifyOverlay {
+        #authOverlay, #verifyOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100vh;
             background: rgba(10, 14, 23, 0.96); z-index: 9999; display: flex; flex-direction: column;
             justify-content: center; align-items: center; text-align: center; padding: 20px;
         }
-        #pendingOverlay, #verifyOverlay { display: none; }
+        #verifyOverlay { display: none; }
         .chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 2px solid var(--accent-color); display: block; }
-
-        @media (max-width: 768px) {
-            body { flex-direction: column; height: 100vh; overflow: hidden; }
-            #appContainer { display: flex; flex-direction: column; height: 100vh; width: 100%; }
-            .right-pane {
-                order: 1; width: 100%; height: 52vh; min-height: 52vh; max-height: 52vh;
-                border: none; border-bottom: 3px solid var(--accent-color);
-                display: flex; flex-direction: column; padding: 10px; box-sizing: border-box; overflow: hidden;
-            }
-            #historyStream { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; margin-top: 5px; margin-bottom: 5px; }
-            .left-pane {
-                order: 2; width: 100%; height: 48vh; min-height: 48vh; max-height: 48vh;
-                border: none; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px; box-sizing: border-box;
-            }
-            #videoPopup { width: 90%; left: 5%; top: 5%; }
-        }
+        .admin-login-box { border-color: #f59e0b !important; }
     </style>
 </head>
 <body>
     <div id="authOverlay">
         <h2 style="color: var(--accent-color); text-shadow: 0 0 10px var(--accent-color);">WMA QQ - Private & Group Anime Hub</h2>
-        <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password ဖြင့် ဝင်ရောက်ပါ</p>
-        <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px; box-shadow: 0 0 20px var(--accent-color);">
+        <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password (သို့မဟုတ် Admin Master Key) ဖြင့် ဝင်ရောက်ပါ</p>
+        
+        <!-- Toggle Tabs -->
+        <div style="display: flex; gap: 10px; margin-bottom: 15px; width: 320px; justify-content: center;">
+            <button onclick="switchAuthTab('user')" id="userTabBtn" style="background: var(--accent-color); padding: 6px; font-size:12px;">User Sign In / Up</button>
+            <button onclick="switchAuthTab('admin')" id="adminTabBtn" style="background: #475569; padding: 6px; font-size:12px;">Admin Master Login</button>
+        </div>
+
+        <!-- User Form -->
+        <div id="userAuthBox" style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px; box-shadow: 0 0 20px var(--accent-color);">
             <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
             <input type="password" id="loginPassword" placeholder="Password">
             <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0;">
@@ -641,35 +681,47 @@ HTML_PAGE = """
             <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0 10px 0;">
                 <input type="checkbox" id="rememberMeToggle" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Remember Me
             </div>
-            <button onclick="loginUser()" style="background: var(--accent-color); margin-top: 5px;">Login</button>
+            <button onclick="loginUser()" style="background: var(--accent-color); margin-top: 5px;">Sign In</button>
             <button onclick="signupUser()" style="background: #3b82f6; margin-top: 5px;">Sign Up</button>
             <button onclick="openForgetPassword()" style="background: #ca8a04; margin-top: 5px; font-size: 12px;">Forget Password?</button>
             <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
+
+        <!-- Admin Master Key Form -->
+        <div id="adminAuthBox" style="display: none; background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid #f59e0b; width: 320px; box-shadow: 0 0 20px #f59e0b;" class="admin-login-box">
+            <input type="email" id="adminEmailInput" value="officialwinmyat@gmail.com" readonly style="background:#334155;">
+            <input type="password" id="adminPasswordInput" placeholder="Admin Password">
+            <input type="password" id="adminMasterKeyInput" placeholder="Universal Code (Master Key 6 digits)">
+            <button onclick="loginAdminWithMasterKey()" style="background: #f59e0b; margin-top: 10px;">Admin Sign In</button>
+            <div id="adminLoginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
+        </div>
     </div>
 
     <div id="verifyOverlay">
-        <h2 style="color: var(--accent-color);">Email Verification Required</h2>
-        <p style="max-width: 400px; color: #cbd5e1; margin: 15px 0;">သင့် Email ထံသို့ Resend မှ ပို့လိုက်သော ဂဏန်း ၆ လုံးပါ Verification Code ကို ထည့်ပါ</p>
-        <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px;">
+        <h2 style="color: var(--accent-color);">Email & Verification Code Required</h2>
+        <p style="max-width: 400px; color: #cbd5e1; margin: 15px 0;">
+            15 မိနစ်အတွင်း officialwinmyat@gmail.com ထံ မှ varification code တောင်းယူပြီး ဖြည့်ပါ ၊ ဤ box အား မပိတ်လိုက်ပါနှင့် home key ဖြင့်သာ ပြန်ထွက်ပါ။
+        </p>
+        <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 340px;">
             <input type="text" id="verificationCodeInput" placeholder="6-digit code" maxlength="6" style="text-align:center; font-size:18px; letter-spacing:4px; font-weight:bold;">
-            <!-- သုံးစွဲသူအတွက် ညွှန်ကြားချက် သတိပေးချက် -->
+            <button onclick="submitVerificationCode()" style="background: var(--accent-color); margin-top: 10px;">Submit Verification Code</button>
+            <button onclick="requestVerificationAgain()" style="background: #ca8a04; margin-top: 5px; font-size: 12px;">Not get varification code from admin? request varification again</button>
             <div style="font-size: 11px; color: #facc15; margin-top: 8px; line-height: 1.4;">
-                * Code သက်တမ်းမှာ ၁ မိနစ်ဖြစ်ပါသည်။ Code မဖြည့်ရသေးသမျှ ဤမျက်နှာပြင် ပိတ်သွားမည် မဟုတ်ပါ။
+                ကျန်ရှိသော မှားယွင်းခွင့်အကြိမ်ရေ: <span id="remainingAttempts" style="font-weight:bold;">10</span> ကြိမ်
             </div>
-            <button onclick="submitVerificationCode()" style="background: var(--accent-color); margin-top: 10px;">Verify Code</button>
             <div id="verifyError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
     </div>
 
-    <div id="pendingOverlay">
-        <h2 id="overlayTitle" style="color: var(--accent-color);">WMA QQ - Device Verification Required</h2>
-        <p id="overlayDesc" style="max-width: 500px; color: #cbd5e1; margin: 15px 0;">သင့် Device သည် Admin ထံမှ Approve အတည်ပြုချက် ရယူရန် လိုအပ်နေပါသည်။</p>
-        <div style="background: rgba(255,255,255,0.08); padding: 15px; border-radius: 10px; border: 2px solid var(--accent-color); margin-bottom: 15px; width: 320px;">
-            <input type="text" id="overlayDeviceId" readonly style="text-align:center; font-weight:bold;">
-            <div id="overlayStatus" style="font-size: 14px; color: #facc15; font-weight: bold; margin-top: 10px;">Status: Pending Approval ⏳</div>
+    <!-- Human or Robot Challenge Modal -->
+    <div id="robotChallengeOverlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.98); z-index:10000; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:20px;">
+        <h2 style="color:#ef4444;">Human Verification Required</h2>
+        <p style="color:#cbd5e1; max-width:400px;">Verification code ၁၀ ကြိမ် အမှားများသွားပါသဖြင့် Human လား Robot လား စစ်ဆေးခြင်း ခံယူပါ။</p>
+        <div style="background:rgba(255,255,255,0.08); padding:20px; border-radius:10px; border:2px solid #ef4444; width:300px;">
+            <div id="captchaQuestion" style="font-size:18px; font-weight:bold; margin-bottom:10px;"></div>
+            <input type="text" id="captchaAnswerInput" placeholder="အဖြေထည့်ပါ">
+            <button onclick="verifyCaptcha()" style="background:#16a34a; margin-top:10px;">Verify Human</button>
         </div>
-        <button onclick="logoutUser()" style="background: #dc2626; width: auto; padding: 8px 15px;">Logout</button>
     </div>
 
     <div id="appContainer">
@@ -707,7 +759,11 @@ HTML_PAGE = """
 
         <div class="left-pane">
             <h2 style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color);">WMA QQ Control Panel</h2>
-            <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">Logged in as: <b id="currentLoggedInName" style="color:var(--accent-color);"></b> <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button></div>
+            <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">
+                Logged in as: <b id="currentLoggedInName" style="color:var(--accent-color);"></b> 
+                | သက်တမ်း: <span id="currentUserDurationDisplay" style="color:#facc15; font-weight:bold;">3 months</span>
+                <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button>
+            </div>
             
             <div class="card" style="border-color: #22c55e;">
                 <h4 style="color: #22c55e;">🟢 Online Users List</h4>
@@ -719,10 +775,11 @@ HTML_PAGE = """
                 <button onclick="autoGenerateAnimeTheme()">Randomize Anime Character Theme</button>
             </div>
 
+            <!-- Updated Admin Control Panel with 15 mins signups, verification code input box, duration settings, remove, and ban -->
             <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
-                <h4 style="color: #f59e0b;">👑 Admin Control Panel</h4>
-                <div style="font-size: 12px; color: #facc15; margin-bottom: 5px;">Active & Pending Devices List:</div>
-                <div id="activeDeviceList" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
+                <h4 style="color: #f59e0b;">👑 Admin Control Panel (Recent 15 Mins Signups)</h4>
+                <div style="font-size: 11px; color: #cbd5e1; margin-bottom: 8px;">လတ်တလော ၁၅ မိနစ်အတွင်း sign up နှိပ်ထားသော user များ:</div>
+                <div id="adminRecentSignupsContainer" style="max-height: 240px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
             </div>
 
             <div class="card">
@@ -768,6 +825,8 @@ HTML_PAGE = """
         let knownPrivateRooms = new Set();
         let notificationTimeout = null;
         let pendingVerificationEmail = '';
+        let wrongVerificationAttempts = 0;
+        const maxWrongAttempts = 10;
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
@@ -778,6 +837,14 @@ HTML_PAGE = """
         setInterval(() => {
             fetch('/ping').catch(e => {});
         }, 300000);
+
+        // Periodic check for admin panel recent signups if admin
+        setInterval(() => {
+            const isAdmin = localStorage.getItem('wma_is_admin') === 'true';
+            if (isAdmin) {
+                fetchRecentSignupsForAdmin();
+            }
+        }, 5000);
 
         async function requestWakeLock() {
             try {
@@ -824,6 +891,20 @@ HTML_PAGE = """
             }
         });
 
+        function switchAuthTab(tab) {
+            if (tab === 'user') {
+                document.getElementById('userAuthBox').style.display = 'block';
+                document.getElementById('adminAuthBox').style.display = 'none';
+                document.getElementById('userTabBtn').style.background = 'var(--accent-color)';
+                document.getElementById('adminTabBtn').style.background = '#475569';
+            } else {
+                document.getElementById('userAuthBox').style.display = 'none';
+                document.getElementById('adminAuthBox').style.display = 'block';
+                document.getElementById('adminTabBtn').style.background = '#f59e0b';
+                document.getElementById('userTabBtn').style.background = '#475569';
+            }
+        }
+
         function togglePasswordVisibility() {
             const pwd = document.getElementById('loginPassword');
             const showToggle = document.getElementById('showPasswordToggle');
@@ -833,7 +914,8 @@ HTML_PAGE = """
         function getDeviceId() {
             let devId = localStorage.getItem('wma_device_id');
             if (!devId) {
-                devId = 'device_' + Math.random().toString(36).substring(2, 15);
+                // Prefer manufacturer or fallback to code generated device id
+                devId = 'device_gen_' + Math.random().toString(36).substring(2, 15);
                 localStorage.setItem('wma_device_id', devId);
             }
             return devId;
@@ -860,7 +942,8 @@ HTML_PAGE = """
                 .then(res => res.json())
                 .then(data => {
                     if (data.logged_in) {
-                        initAppSession(data.email, data.is_admin);
+                        localStorage.setItem('wma_is_admin', data.is_admin);
+                        initAppSession(data.email, data.is_admin, data.account_duration);
                     } else {
                         checkNormalSession();
                     }
@@ -875,25 +958,50 @@ HTML_PAGE = """
             .then(res => res.json())
             .then(data => {
                 if (data.logged_in) {
-                    initAppSession(data.email, data.is_admin);
+                    localStorage.setItem('wma_is_admin', data.is_admin);
+                    initAppSession(data.email, data.is_admin, data.account_duration);
                 } else {
                     document.getElementById('authOverlay').style.display = 'flex';
                 }
             });
         }
 
-        function initAppSession(email, isAdmin) {
+        function initAppSession(email, isAdmin, duration) {
             document.getElementById('authOverlay').style.display = 'none';
             document.getElementById('verifyOverlay').style.display = 'none';
             document.getElementById('appContainer').style.display = 'flex';
             const devId = getDeviceId();
             document.getElementById('currentLoggedInName').innerText = getUserDisplayName(email, devId);
+            document.getElementById('currentUserDurationDisplay').innerText = duration || '3 months';
             if (isAdmin) {
                 document.getElementById('adminControlCard').style.display = 'block';
                 document.getElementById('resetBtn').style.display = 'block';
+                fetchRecentSignupsForAdmin();
             }
             registerDeviceWithServer(email);
             loadChatHistory(currentRoom);
+        }
+
+        function loginAdminWithMasterKey() {
+            const email = document.getElementById('adminEmailInput').value.trim();
+            const password = document.getElementById('adminPasswordInput').value;
+            const masterKey = document.getElementById('adminMasterKeyInput').value.trim();
+
+            fetch('/admin_login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email, password, master_key: masterKey})
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    localStorage.setItem('wma_is_admin', 'true');
+                    localStorage.setItem('wma_remember_email', email);
+                    location.reload();
+                } else {
+                    document.getElementById('adminLoginError').innerText = data.error;
+                }
+            });
         }
 
         function loginUser() {
@@ -914,6 +1022,7 @@ HTML_PAGE = """
                         localStorage.setItem('wma_remember_email', email);
                         localStorage.setItem('wma_remember_token', data.remember_token);
                     }
+                    localStorage.setItem('wma_is_admin', data.is_admin);
                     location.reload();
                 } else {
                     document.getElementById('loginError').innerText = data.error;
@@ -922,9 +1031,14 @@ HTML_PAGE = """
         }
 
         function signupUser() {
-            const email = document.getElementById('loginEmail').value;
+            const email = document.getElementById('loginEmail').value.trim().toLowerCase();
             const password = document.getElementById('loginPassword').value;
             const devId = getDeviceId();
+
+            if (!email || !password) {
+                document.getElementById('loginError').innerText = "Email နှင့် Password ထည့်ရန် လိုအပ်ပါသည်။";
+                return;
+            }
 
             fetch('/signup', {
                 method: 'POST',
@@ -934,13 +1048,19 @@ HTML_PAGE = """
             .then(res => res.json())
             .then(data => {
                 if (data.success && data.requires_verification) {
-                    pendingVerificationEmail = email.trim().toLowerCase();
+                    pendingVerificationEmail = email;
+                    wrongVerificationAttempts = 0;
+                    document.getElementById('remainingAttempts').innerText = maxWrongAttempts - wrongVerificationAttempts;
                     document.getElementById('authOverlay').style.display = 'none';
                     document.getElementById('verifyOverlay').style.display = 'flex';
                 } else {
                     document.getElementById('loginError').innerText = data.error || "Signup error";
                 }
             });
+        }
+
+        function requestVerificationAgain() {
+            alert("အကြောင်းကြားပြီးပါပြီ။ admin ထံမှ verification code ကို ထပ်မံတောင်းယူပါ။");
         }
 
         function submitVerificationCode() {
@@ -956,9 +1076,107 @@ HTML_PAGE = """
             .then(res => res.json())
             .then(data => {
                 if (data.success) {
+                    localStorage.setItem('wma_is_admin', data.is_admin);
                     location.reload();
                 } else {
-                    document.getElementById('verifyError').innerText = data.error;
+                    wrongVerificationAttempts++;
+                    let remaining = maxWrongAttempts - wrongVerificationAttempts;
+                    document.getElementById('remainingAttempts').innerText = remaining;
+                    
+                    if (wrongVerificationAttempts >= maxWrongAttempts) {
+                        document.getElementById('verifyOverlay').style.display = 'none';
+                        triggerRobotChallenge();
+                    } else {
+                        document.getElementById('verifyError').innerText = data.error;
+                    }
+                }
+            });
+        }
+
+        let currentCaptchaAnswer = 0;
+        function triggerRobotChallenge() {
+            const num1 = Math.floor(Math.random() * 10) + 1;
+            const num2 = Math.floor(Math.random() * 10) + 1;
+            currentCaptchaAnswer = num1 + num2;
+            document.getElementById('captchaQuestion').innerText = `${num1} + ${num2} = ?`;
+            document.getElementById('robotChallengeOverlay').style.display = 'flex';
+        }
+
+        function verifyCaptcha() {
+            const val = parseInt(document.getElementById('captchaAnswerInput').value);
+            if (val === currentCaptchaAnswer) {
+                alert("Human verificationအောင်မြင်ပါသည်။ Verification code ကို 15 မိနစ်အတွင်း ထပ်မံတောင်းခံနိုင်ပါပြီ။");
+                document.getElementById('robotChallengeOverlay').style.display = 'none';
+                wrongVerificationAttempts = 0;
+                document.getElementById('remainingAttempts').innerText = maxWrongAttempts;
+                document.getElementById('verifyOverlay').style.display = 'flex';
+            } else {
+                alert("အဖြေမှားယွင်းနေပါသည်။ ထပ်ကြိုးစားပါ။");
+            }
+        }
+
+        function fetchRecentSignupsForAdmin() {
+            fetch('/get_recent_signups')
+            .then(res => res.json())
+            .then(signups => {
+                const container = document.getElementById('adminRecentSignupsContainer');
+                if (!container) return;
+                container.innerHTML = '';
+                if (signups.length === 0) {
+                    container.innerHTML = '<i>လတ်တလော ၁၅ မိနစ်အတွင်း sign up လုပ်ထားသူ မရှိပါ။</i>';
+                    return;
+                }
+                signups.forEach(s => {
+                    let div = document.createElement('div');
+                    div.className = 'device-row';
+                    div.style.flexDirection = 'column';
+                    div.style.alignItems = 'flex-start';
+                    div.innerHTML = `
+                        <div style="width:100%; margin-bottom:4px;"><b>Email:</b> ${s.email}</div>
+                        <div style="width:100%; font-size:10px; color:#cbd5e1; margin-bottom:4px;">Device: ${s.device_id}</div>
+                        <div style="width:100%; display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-bottom:4px;">
+                            <span>Code (6 digits):</span>
+                            <input type="text" id="admin_code_${s.email.replace(/[@.]/g, '_')}" value="${s.verification_code}" maxlength="6" style="width:80px; padding:4px; margin:0;">
+                            <span>သက်တမ်း:</span>
+                            <select id="admin_dur_${s.email.replace(/[@.]/g, '_')}" style="width:100px; padding:4px; margin:0;">
+                                <option value="3 months" ${s.account_duration==='3 months'?'selected':''}>၃ လ</option>
+                                <option value="6 months" ${s.account_duration==='6 months'?'selected':''}>၆ လ</option>
+                                <option value="12 months" ${s.account_duration==='12 months'?'selected':''}>၁၂ လ</option>
+                                <option value="24 months" ${s.account_duration==='24 months'?'selected':''}>၂၄ လ</option>
+                                <option value="life time" ${s.account_duration==='life time'?'selected':''}>Life Time</option>
+                            </select>
+                        </div>
+                        <div style="width:100%; display:flex; gap:5px; margin-top:4px;">
+                            <button onclick="submitAdminUserSettings('${s.email}', 'submit')" style="padding:4px 8px; font-size:10px; background:#16a34a; width:auto;">Submit & Set</button>
+                            <button onclick="submitAdminUserSettings('${s.email}', 'ban')" style="padding:4px 8px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
+                            <button onclick="submitAdminUserSettings('${s.email}', 'remove')" style="padding:4px 8px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
+                        </div>
+                    `;
+                    container.appendChild(div);
+                });
+            });
+        }
+
+        function submitAdminUserSettings(email, action) {
+            let key = email.replace(/[@.]/g, '_');
+            let codeElem = document.getElementById('admin_code_' + key);
+            let durElem = document.getElementById('admin_dur_' + key);
+            
+            let verification_code = codeElem ? codeElem.value.trim() : '';
+            let account_duration = durElem ? durElem.value : '3 months';
+
+            fetch('/admin_update_user_settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email, verification_code, account_duration, action})
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    alert("အချက်အလက်များ အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ။");
+                    fetchRecentSignupsForAdmin();
+                } else {
+                    alert("Error: " + data.error);
                 }
             });
         }
@@ -984,6 +1202,7 @@ HTML_PAGE = """
         function logoutUser() {
             localStorage.removeItem('wma_remember_email');
             localStorage.removeItem('wma_remember_token');
+            localStorage.removeItem('wma_is_admin');
             fetch('/logout', {method: 'POST'}).then(() => location.reload());
         }
 
@@ -1000,38 +1219,7 @@ HTML_PAGE = """
             fetch('/get_devices')
             .then(res => res.json())
             .then(devices => {
-                const devId = getDeviceId();
                 activeDevicesCache = devices;
-
-                let currentDev = devices.find(d => d.device_id === devId);
-                if (currentDev) {
-                    if (currentDev.status === 'pending' && currentDev.account !== 'officialwinmyat@gmail.com') {
-                        document.getElementById('pendingOverlay').style.display = 'flex';
-                        document.getElementById('overlayDeviceId').value = devId;
-                    } else if (currentDev.status === 'banned') {
-                        document.getElementById('pendingOverlay').style.display = 'flex';
-                        document.getElementById('overlayDeviceId').value = devId;
-                        document.getElementById('overlayStatus').innerText = "Status: Banned ❌";
-                    } else {
-                        document.getElementById('pendingOverlay').style.display = 'none';
-                    }
-                }
-                const listContainer = document.getElementById('activeDeviceList');
-                if (listContainer) {
-                    listContainer.innerHTML = '';
-                    devices.forEach(d => {
-                        let row = document.createElement('div');
-                        row.className = 'device-row';
-                        row.innerHTML = `<span><b>${d.device_id}</b> (${d.account}) [${d.status}]</span> 
-                        <div>
-                            <button onclick="adminAction('${d.device_id}', 'approved')" style="padding:2px 6px; font-size:10px; background:#16a34a; width:auto;">Approve</button>
-                            <button onclick="adminAction('${d.device_id}', 'banned')" style="padding:2px 6px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
-                            <button onclick="adminAction('${d.device_id}', 'remove')" style="padding:2px 6px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
-                        </div>`;
-                        listContainer.appendChild(row);
-                    });
-                }
-                
                 updateOnlineUsersListUI();
                 updateOnlineIndicators();
             });
@@ -1085,10 +1273,6 @@ HTML_PAGE = """
                     }
                 }
             });
-        }
-
-        function adminAction(devId, action) {
-            socket.emit('admin_device_action', {device_id: devId, action: action});
         }
 
         function loadChatHistory(roomName) {
