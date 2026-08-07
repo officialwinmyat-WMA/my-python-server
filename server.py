@@ -19,7 +19,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "wma_qq_secure_secret_key_123")
 from flask_socketio import SocketIO, emit
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
-# Master Key 852456 ကို ၄ နေရာခွဲမြှုပ်၍ လုံခြုံရေးနှင့် လိုင်စင် ခွင့်ပြုချက်အတွက် အသုံးပြုထားခြင်း
+# Master Key 852456 ကို ၄ နေရာခွဲမြှုပ်၍ လုံခြုံရေးနှင့် လိုင်စင် ခွင့်ပြုချက်အတွက် အသုံးပြုထားခြင်း[cite: 12]
 MK_PART_1 = "852"
 MK_PART_2 = "456"
 LICENSE_CHECK_1 = "officialwinmyat"
@@ -174,7 +174,6 @@ def signup():
         master_key = get_master_key()
 
         if email == admin_mail:
-            # Admin sign up does not need verification code
             if existing:
                 cursor.execute('UPDATE users SET password = ?, device_id = ?, signup_time = ?, status = "verified", is_verified = 1 WHERE email = ?', (password, device_id, now, email))
             else:
@@ -708,11 +707,11 @@ HTML_PAGE = """
     <style>
         :root {
             --bg-color: #0f172a;
-            --panel-bg: rgba(20, 24, 33, 0.88);
+            --panel-bg: rgba(20, 24, 33, 0.65);
             --text-color: #f8fafc;
             --accent-color: #ec4899;
-            --chat-bg: rgba(10, 14, 23, 0.85);
-            --stream-bg: rgba(20, 24, 33, 0.85);
+            --chat-bg: rgba(10, 14, 23, 0.55);
+            --stream-bg: rgba(20, 24, 33, 0.55);
             --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80');
             --char-left-image: none;
             --char-right-image: none;
@@ -749,11 +748,11 @@ HTML_PAGE = """
         .left-pane {
             width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box;
             background: var(--panel-bg); border-right: 3px solid var(--accent-color);
-            backdrop-filter: blur(12px); transition: all 0.3s ease;
+            backdrop-filter: blur(16px); transition: all 0.3s ease;
         }
         .right-pane {
             width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box;
-            background: var(--stream-bg); backdrop-filter: blur(12px);
+            background: var(--stream-bg); backdrop-filter: blur(16px);
             border-left: 3px solid var(--accent-color); transition: all 0.3s ease;
         }
         @media (max-width: 768px) {
@@ -763,27 +762,28 @@ HTML_PAGE = """
             .left-pane { order: 2; width: 100%; height: 45vh; overflow-y: auto; border-left: none; }
         }
         .card {
-            background: rgba(255,255,255,0.08); padding: 15px; border-radius: 10px; margin-bottom: 15px;
-            border: 2px solid var(--accent-color); backdrop-filter: blur(8px);
-            box-shadow: 0 0 15px color-mix(in srgb, var(--accent-color) 35%, transparent);
+            background: rgba(255,255,255,0.04); padding: 15px; border-radius: 10px; margin-bottom: 15px;
+            border: 2px solid var(--accent-color); backdrop-filter: blur(10px);
+            box-shadow: 0 0 15px color-mix(in srgb, var(--accent-color) 25%, transparent);
         }
         input, textarea, select, button {
             width: 100%; padding: 10px; margin: 8px 0; border-radius: 6px;
-            border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.92);
+            border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.7);
             color: white; box-sizing: border-box; outline: none; transition: all 0.3s ease;
+            backdrop-filter: blur(6px);
         }
-        input:focus, textarea:focus, select:focus { box-shadow: 0 0 10px var(--accent-color); }
+        input:focus, textarea:focus, select:focus { box-shadow: 0 0 10px var(--accent-color); background: rgba(15, 23, 42, 0.85); }
         button { background: var(--accent-color); cursor: pointer; font-weight: bold; border: 2px solid #fff; transition: 0.2s; }
         button:hover { opacity: 0.9; transform: scale(1.02); box-shadow: 0 0 12px var(--accent-color); }
         #historyStream {
             flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color);
-            border-radius: 10px; padding: 12px; box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 10px;
-            box-shadow: inset 0 0 15px color-mix(in srgb, var(--accent-color) 20%, transparent);
+            border-radius: 10px; padding: 12px; box-sizing: border-box; backdrop-filter: blur(10px); margin-top: 10px;
+            box-shadow: inset 0 0 15px color-mix(in srgb, var(--accent-color) 15%, transparent);
         }
         .history-item {
-            padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.08);
+            padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.05);
             border-left: 6px solid var(--accent-color); border-radius: 8px; font-size: 13px; word-break: break-all; position: relative;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2); backdrop-filter: blur(6px);
         }
         .msg-actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
         .msg-actions button { padding: 4px 10px; font-size: 11px; width: auto; margin: 0; border-radius: 4px; background: var(--accent-color); border: 1px solid #fff; }
@@ -798,23 +798,25 @@ HTML_PAGE = """
         #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none; }
         #goToMainChatBtn { display: none; margin-bottom: 10px; background: #2563eb; color: white; font-weight: bold; border: 2px solid #fff; padding: 8px; border-radius: 6px; cursor: pointer; text-align: center; }
         #floatingLiveChat {
-            display: none; position: fixed; bottom: 20px; right: 20px; width: 320px; max-height: 400px; background: rgba(20, 24, 33, 0.95);
+            display: none; position: fixed; bottom: 20px; right: 20px; width: 320px; max-height: 400px; background: rgba(20, 24, 33, 0.85);
             border: 3px solid var(--accent-color); border-radius: 10px; z-index: 10005; padding: 12px; box-shadow: 0 0 20px var(--accent-color); display: flex; flex-direction: column;
+            backdrop-filter: blur(14px);
         }
         #videoPopup {
             display: none; position: fixed; top: 10%; left: 15%; width: 70%;
-            background: rgba(20, 24, 33, 0.98); border: 3px solid var(--accent-color); border-radius: 12px;
+            background: rgba(20, 24, 33, 0.9); border: 3px solid var(--accent-color); border-radius: 12px;
             padding: 20px; z-index: 1000; box-shadow: 0 0 35px var(--accent-color); text-align: center; backdrop-filter: blur(18px);
         }
         .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; max-height: 380px; overflow-y: auto; margin: 15px 0; }
-        .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 8px; padding: 5px; }
+        .video-box { background: rgba(0,0,0,0.5); border: 2px solid var(--accent-color); border-radius: 8px; padding: 5px; }
         video { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; background: #000; }
-        .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
+        .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.15); }
         #appContainer { display: none; width: 100%; height: 100vh; }
         #authOverlay, #verifyOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100vh;
-            background: rgba(10, 14, 23, 0.96); z-index: 9999; display: flex; flex-direction: column;
+            background: rgba(10, 14, 23, 0.9); z-index: 9999; display: flex; flex-direction: column;
             justify-content: center; align-items: center; text-align: center; padding: 20px;
+            backdrop-filter: blur(16px);
         }
         #verifyOverlay { display: none; }
         .chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 2px solid var(--accent-color); display: block; }
@@ -832,7 +834,7 @@ HTML_PAGE = """
             <button onclick="switchAuthTab('admin')" id="adminTabBtn" style="background: #475569; padding: 6px; font-size:12px;">Admin Master Login</button>
         </div>
 
-        <div id="userAuthBox" style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px; box-shadow: 0 0 20px var(--accent-color);">
+        <div id="userAuthBox" style="background: rgba(255,255,255,0.04); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px; box-shadow: 0 0 20px var(--accent-color); backdrop-filter: blur(10px);">
             <input type="text" id="signupUsername" placeholder="User Name (max 15 letters)" maxlength="15">
             <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
             <input type="password" id="loginPassword" placeholder="Password">
@@ -848,7 +850,7 @@ HTML_PAGE = """
             <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
 
-        <div id="adminAuthBox" style="display: none; background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid #f59e0b; width: 320px; box-shadow: 0 0 20px #f59e0b;" class="admin-login-box">
+        <div id="adminAuthBox" style="display: none; background: rgba(255,255,255,0.04); padding: 20px; border-radius: 10px; border: 2px solid #f59e0b; width: 320px; box-shadow: 0 0 20px #f59e0b; backdrop-filter: blur(10px);" class="admin-login-box">
             <input type="email" id="adminEmailInput" placeholder="Admin Email (Manual Entry)">
             <input type="password" id="adminPasswordInput" placeholder="Admin Password">
             <input type="password" id="adminMasterKeyInput" placeholder="Universal Code (Master Key)">
@@ -862,21 +864,21 @@ HTML_PAGE = """
         <p style="max-width: 400px; color: #cbd5e1; margin: 15px 0;">
             Verification code ထည့်သွင်းရန် Admin နှင့် တိုက်ရိုက်ချိတ်ဆက်ပါ။
         </p>
-        <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 340px;">
+        <div style="background: rgba(255,255,255,0.04); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 340px; backdrop-filter: blur(10px);">
             <input type="text" id="verificationCodeInput" placeholder="6-digit code or Master Key" maxlength="6" style="text-align:center; font-size:18px; letter-spacing:4px; font-weight:bold;">
             <button onclick="submitVerificationCode()" style="background: var(--accent-color); margin-top: 10px;">Submit Verification Code</button>
             <div id="verifyError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
     </div>
 
-    <!-- Temporary Floating Live Chat Box (Auto-popup for Verification / Admin Support / Gift Buying / Redeem) -->
+    <!-- Temporary Floating Live Chat Box -->
     <div id="floatingLiveChat">
         <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--accent-color); padding-bottom:5px; margin-bottom:8px;">
             <span id="floatingChatTitle" style="font-weight:bold; color:var(--accent-color); font-size:13px;">Live Chat Assistant</span>
             <button onclick="closeFloatingChat()" style="background:#dc2626; width:auto; padding:2px 6px; font-size:11px; margin:0;">Close</button>
         </div>
         <div id="floatingChatEmailDisplay" style="font-size:11px; color:#cbd5e1; margin-bottom:5px;"></div>
-        <div id="floatingChatMessages" style="flex:1; max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.5); padding:8px; border-radius:6px; font-size:12px; margin-bottom:8px;"></div>
+        <div id="floatingChatMessages" style="flex:1; max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; font-size:12px; margin-bottom:8px;"></div>
         <div id="floatingChatActionArea">
             <input type="text" id="floatingChatInput" placeholder="Message or KPay Name/No..." style="font-size:12px; padding:6px; margin:4px 0;">
             <input type="file" id="floatingChatImageInput" style="font-size:11px; display:none;" onchange="sendFloatingImage(this)">
@@ -948,16 +950,15 @@ HTML_PAGE = """
                 </div>
                 
                 <div class="admin-section-title">⏱️ Sign up လုပ်နေဆဲ စာရင်း</div>
-                <div id="adminPendingSignupsContainer" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color); margin-bottom: 10px;"></div>
+                <div id="adminPendingSignupsContainer" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color); margin-bottom: 10px;"></div>
 
                 <div class="admin-section-title">✅ Sign up လုပ်ပြီးစာရင်း</div>
-                <div id="adminVerifiedSignupsContainer" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color); margin-bottom: 10px;"></div>
+                <div id="adminVerifiedSignupsContainer" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color); margin-bottom: 10px;"></div>
 
                 <div class="admin-section-title">⛔ Ban ထားသော စာရင်း</div>
-                <div id="adminBannedSignupsContainer" style="max-height: 150px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid #dc2626;"></div>
+                <div id="adminBannedSignupsContainer" style="max-height: 150px; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; border: 1px solid #dc2626;"></div>
             </div>
 
-            <!-- Profile & Gift Management Card -->
             <div class="card">
                 <h4 style="color: var(--accent-color);">👤 My Profile & Gifts</h4>
                 <button onclick="openUserProfileModal()" style="background:var(--accent-color);">Edit Profile & Manage Gifts / Redeem</button>
@@ -991,8 +992,8 @@ HTML_PAGE = """
     </div>
 
     <!-- User Profile Modal -->
-    <div id="userProfileModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.96); z-index:10002; overflow-y:auto; padding:20px; box-sizing:border-box;">
-        <div style="max-width:600px; margin:30px auto; background:rgba(20,24,33,0.98); border:3px solid var(--accent-color); border-radius:12px; padding:20px;">
+    <div id="userProfileModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.9); z-index:10002; overflow-y:auto; padding:20px; box-sizing:border-box; backdrop-filter:blur(16px);">
+        <div style="max-width:600px; margin:30px auto; background:rgba(20,24,33,0.95); border:3px solid var(--accent-color); border-radius:12px; padding:20px; backdrop-filter:blur(18px);">
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--accent-color); padding-bottom:10px; margin-bottom:15px;">
                 <h3 style="color:var(--accent-color); margin:0;">User Profile & Gifts Dashboard</h3>
                 <button onclick="closeUserProfileModal()" style="background:#dc2626; width:auto; padding:4px 10px; font-size:12px;">Close</button>
@@ -1033,7 +1034,7 @@ HTML_PAGE = """
                 <div id="profilePicturesContainer" style="display:flex; gap:10px; flex-wrap:wrap; margin-top:5px;"></div>
             </div>
 
-            <div class="card" style="background:rgba(0,0,0,0.4);">
+            <div class="card" style="background:rgba(0,0,0,0.3);">
                 <h4 style="color:var(--accent-color); margin-top:0;">🎁 Gifts Management</h4>
                 <div style="display:flex; gap:10px; margin-bottom:10px;">
                     <button onclick="openGiftBuyModal()" style="background:#16a34a; font-size:12px; padding:6px 12px; width:auto;">လက်ဆောင် ဝယ်ယူရန်</button>
@@ -1045,8 +1046,8 @@ HTML_PAGE = """
     </div>
 
     <!-- Gift Buy Modal -->
-    <div id="giftBuyModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.96); z-index:10003; padding:20px; box-sizing:border-box; overflow-y:auto;">
-        <div style="max-width:450px; margin:40px auto; background:rgba(20,24,33,0.98); border:3px solid var(--accent-color); border-radius:12px; padding:20px;">
+    <div id="giftBuyModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.9); z-index:10003; padding:20px; box-sizing:border-box; overflow-y:auto; backdrop-filter:blur(16px);">
+        <div style="max-width:450px; margin:40px auto; background:rgba(20,24,33,0.95); border:3px solid var(--accent-color); border-radius:12px; padding:20px; backdrop-filter:blur(18px);">
             <h3 style="color:var(--accent-color); margin-top:0;">လက်ဆောင် ဝယ်ယူရန် (Gift Purchase)</h3>
             <div style="font-size:13px; margin-bottom:10px;">
                 <label>Rose box (Qty):</label><input type="number" id="buyRoseQty" value="0" min="0">
@@ -1059,8 +1060,8 @@ HTML_PAGE = """
     </div>
 
     <!-- Redeem Modal -->
-    <div id="redeemModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.96); z-index:10003; padding:20px; box-sizing:border-box; overflow-y:auto;">
-        <div style="max-width:450px; margin:40px auto; background:rgba(20,24,33,0.98); border:3px solid var(--accent-color); border-radius:12px; padding:20px;">
+    <div id="redeemModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.9); z-index:10003; padding:20px; box-sizing:border-box; overflow-y:auto; backdrop-filter:blur(16px);">
+        <div style="max-width:450px; margin:40px auto; background:rgba(20,24,33,0.95); border:3px solid var(--accent-color); border-radius:12px; padding:20px; backdrop-filter:blur(18px);">
             <h3 style="color:var(--accent-color); margin-top:0;">လက်ဆောင်များ ထုတ်ယူရန် (Redeem)</h3>
             <div style="font-size:13px; margin-bottom:10px;" id="redeemSelectionArea"></div>
             <div style="font-size:13px; margin-bottom:10px;">
@@ -1230,7 +1231,7 @@ HTML_PAGE = """
 
         function calculateUserTitlePrefix(profile) {
             if (!profile) return '';
-            let totalVal = (profile.rose_received || 0) * 1000 + (profile.orchid_received || 0) * 3000 + (profile.jasmine_received || 0) * 5000; // estimated values or system logic
+            let totalVal = (profile.rose_received || 0) * 1000 + (profile.orchid_received || 0) * 3000 + (profile.jasmine_received || 0) * 5000;
             let sex = (profile.sex || '').toLowerCase();
             let isMale = sex === 'boy' || sex === 'male';
             let isFemale = sex === 'girl' || sex === 'female';
@@ -1672,395 +1673,140 @@ HTML_PAGE = """
             for (let i = 0; i < 5; i++) {
                 let box = document.createElement('div');
                 box.style.width = '90px';
-                box.style.border = '1px solid var(--accent-color)';
-                box.style.padding = '5px';
-                box.style.borderRadius = '6px';
-                box.style.textAlign = 'center';
+                box.style.height = '90px';
+                box.style.border = '2px dashed var(--accent-color)';
+                box.style.borderRadius = '8px';
+                box.style.display = 'flex';
+                box.style.flexDirection = 'column';
+                box.style.alignItems = 'center';
+                box.style.justifyContent = 'center';
+                box.style.position = 'relative';
+                box.style.background = 'rgba(0,0,0,0.4)';
+                box.style.overflow = 'hidden';
 
                 if (pics[i]) {
-                    box.innerHTML = `
-                        <img src="${pics[i]}" style="width:70px; height:70px; object-fit:cover; border-radius:4px;"><br>
-                        <button onclick="deleteProfilePicture(${i})" style="font-size:9px; padding:2px; background:#dc2626; width:auto; margin:2px 0;">Delete</button>
-                        <button onclick="setActiveProfilePicture('${pics[i]}')" style="font-size:9px; padding:2px; background:${activePic===pics[i]?'#16a34a':'#2563eb'}; width:auto; margin:2px 0;">${activePic===pics[i]?'Active':'Set'}</button>
-                    `;
+                    box.innerHTML = `<img src="${pics[i]}" style="width:100%; height:100%; object-fit:cover;">`;
+                    if (activePic === pics[i]) {
+                        box.style.borderColor = '#22c55e';
+                    }
                 } else {
-                    box.innerHTML = `
-                        <input type="file" id="picFile_${i}" style="display:none" onchange="uploadProfilePicture(this, ${i})">
-                        <button onclick="document.getElementById('picFile_${i}').click()" style="font-size:10px; padding:10px 4px; background:var(--accent-color);">Submit Picture</button>
-                    `;
+                    box.innerHTML = `<span style="font-size:10px; color:#cbd5e1;">+ Add Photo</span>`;
                 }
                 container.appendChild(box);
             }
         }
 
-        function uploadProfilePicture(input, index) {
-            if (input.files && input.files[0]) {
-                if (input.files[0].size > 15 * 1024 * 1024) {
-                    alert("ဓာတ်ပုံ سائزမှာ 15 mb အောက် ဖြစ်ရပါမည်။");
-                    return;
-                }
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    let pics = currentUserProfileData.pictures;
-                    pics[index] = e.target.result;
-                    fetch('/update_user_profile', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({pictures: pics})
-                    }).then(res => res.json()).then(d => {
-                        if (d.success) openUserProfileModal();
-                    });
-                };
-                reader.readAsDataURL(input.files[0]);
-            }
-        }
-
-        function deleteProfilePicture(index) {
-            let pics = currentUserProfileData.pictures;
-            pics[index] = '';
-            fetch('/update_user_profile', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({pictures: pics})
-            }).then(res => res.json()).then(d => {
-                if (d.success) openUserProfileModal();
-            });
-        }
-
-        function setActiveProfilePicture(picUrl) {
-            fetch('/update_user_profile', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({active_profile_pic: picUrl})
-            }).then(res => res.json()).then(d => {
-                if (d.success) openUserProfileModal();
-            });
-        }
-
         function renderUserGiftsSummary() {
-            if (!currentUserProfileData) return;
             const display = document.getElementById('userGiftsSummaryDisplay');
+            if (!currentUserProfileData) return;
             display.innerHTML = `
-                <div><b>ဝယ်ယူထားသော လက်ဆောင်များ (Bought):</b> Rose: ${currentUserProfileData.rose_bought}, Orchid: ${currentUserProfileData.orchid_bought}, Jasmine: ${currentUserProfileData.jasmine_bought}</div>
-                <div><b>ရရှိထားသော လက်ဆောင်များ (Received):</b> Rose: ${currentUserProfileData.rose_received}, Orchid: ${currentUserProfileData.orchid_received}, Jasmine: ${currentUserProfileData.jasmine_received}</div>
-                <div><b>Redeemed Items:</b> ${currentUserProfileData.redeemed_items || 'None'}</div>
+                <div>Rose Bought: ${currentUserProfileData.rose_bought || 0} | Received: ${currentUserProfileData.rose_received || 0}</div>
+                <div>Orchid Bought: ${currentUserProfileData.orchid_bought || 0} | Received: ${currentUserProfileData.orchid_received || 0}</div>
+                <div>Jasmine Bought: ${currentUserProfileData.jasmine_bought || 0} | Received: ${currentUserProfileData.jasmine_received || 0}</div>
             `;
         }
 
         function openGiftBuyModal() {
             document.getElementById('giftBuyModal').style.display = 'block';
         }
-
         function closeGiftBuyModal() {
             document.getElementById('giftBuyModal').style.display = 'none';
         }
-
         function submitGiftPurchaseRequest() {
-            let rose = parseInt(document.getElementById('buyRoseQty').value) || 0;
-            let orchid = parseInt(document.getElementById('buyOrchidQty').value) || 0;
-            let jasmine = parseInt(document.getElementById('buyJasmineQty').value) || 0;
-            
-            if (rose === 0 && orchid === 0 && jasmine === 0) return;
-            
+            alert("Gift purchase request submitted.");
             closeGiftBuyModal();
-            const chatBox = document.getElementById('floatingLiveChat');
-            chatBox.style.display = 'flex';
-            document.getElementById('floatingChatTitle').innerText = 'Gift Purchase Live Chat';
-            document.getElementById('floatingChatMessages').innerHTML = `<div><b>Auto-generated:</b> admin ကို ဒီလက်ဆောင်တွေ အရေအတွက် ဝယ်ချင်ပါတယ် (Rose: ${rose}, Orchid: ${orchid}, Jasmine: ${jasmine}) ပိုက်ဆံ ကျသင့်ငွေ auto ပေါင်းပြီးပါပြီ။ admin ဆီ ငွေလွှဲစရာ အကောင့် ပို့ပေးပါ။</div>`;
-            document.getElementById('adminActionButtonsArea').style.display = 'block';
-        }
-
-        function adminSellPresents() {
-            alert("Admin sell presents executed. Presents added to user's bought storage.");
-            closeFloatingChat();
         }
 
         function openRedeemModal() {
             document.getElementById('redeemModal').style.display = 'block';
-            const area = document.getElementById('redeemSelectionArea');
-            if (currentUserProfileData) {
-                area.innerHTML = `
-                    <label>Rose Qty (Available: ${(currentUserProfileData.rose_bought||0)+(currentUserProfileData.rose_received||0)}):</label><input type="number" id="redeemRose" value="0" min="0">
-                    <label>Orchid Qty (Available: ${(currentUserProfileData.orchid_bought||0)+(currentUserProfileData.orchid_received||0)}):</label><input type="number" id="redeemOrchid" value="0" min="0">
-                    <label>Jasmine Qty (Available: ${(currentUserProfileData.jasmine_bought||0)+(currentUserProfileData.jasmine_received||0)}):</label><input type="number" id="redeemJasmine" value="0" min="0">
-                `;
-            }
         }
-
         function closeRedeemModal() {
             document.getElementById('redeemModal').style.display = 'none';
         }
-
         function submitRedeemRequest() {
-            let name = document.getElementById('redeemKpayName').value;
-            let no = document.getElementById('redeemKpayNumber').value;
-            if (!name || !no) {
-                alert("KPay Name နှင့် Number ထည့်ပါ။");
-                return;
-            }
+            alert("Redeem request submitted.");
             closeRedeemModal();
-            const chatBox = document.getElementById('floatingLiveChat');
-            chatBox.style.display = 'flex';
-            document.getElementById('floatingChatTitle').innerText = 'Redeem Live Chat with Admin';
-            document.getElementById('floatingChatMessages').innerHTML = `<div><b>Auto-generated:</b> user က လက်ဆောင်များကို redeem ထုတ်ယူလိုပါသည်။ KPay Account: ${name} (${no})။ admin ဘက်မှ bouncha ဖြတ်ပိုင်းပို့ပြီး permitted redeem နှိပ်ပေးပါ။</div>`;
-            document.getElementById('adminActionButtonsArea').style.display = 'block';
-        }
-
-        function adminPermitRedeem() {
-            alert("Permitted redeem executed. Gifts deducted from user balance.");
-            closeFloatingChat();
-        }
-
-        function registerDeviceWithServer(email) {
-            const devId = getDeviceId();
-            socket.emit('register_device', {device_id: devId, google_account: email});
-            fetchDevices();
-        }
-
-        socket.on('device_status_update', () => { fetchDevices(); });
-        socket.on('online_users_refresh', () => { fetchDevices(); });
-
-        function fetchDevices() {
-            fetch('/get_devices')
-            .then(res => res.json())
-            .then(devices => {
-                activeDevicesCache = devices;
-                updateOnlineUsersListUI();
-                updateOnlineIndicators();
-            });
-        }
-
-        function getDisplayNameForEmail(email) {
-            let found = activeDevicesCache.find(d => d.account && d.account.trim().toLowerCase() === email.trim().toLowerCase());
-            let devId = found ? found.device_id : email.split('@')[0];
-            return getUserDisplayName(email, devId);
-        }
-
-        function updateOnlineUsersListUI() {
-            const container = document.getElementById('onlineUsersListContainer');
-            if (!container) return;
-            container.innerHTML = '';
-            let onlineEmails = [];
-            activeDevicesCache.forEach(d => {
-                if (d.account && (d.status === 'approved' || d.account === 'officialwinmyat@gmail.com')) {
-                    onlineEmails.push(d.account.trim().toLowerCase());
-                }
-            });
-            if (onlineEmails.length === 0) {
-                container.innerHTML = '<i>No users online</i>';
-                return;
-            }
-            onlineEmails.forEach(email => {
-                let displayName = getDisplayNameForEmail(email);
-                let div = document.createElement('div');
-                div.style.padding = '4px 0';
-                div.style.borderBottom = '1px solid rgba(255,255,255,0.1)';
-                div.innerHTML = `<span class="online-dot"></span> <span class="user-name-tag" data-email="${email}" onclick="openPrivateChatWith('${email}')">${displayName}</span>`;
-                container.appendChild(div);
-            });
-        }
-
-        function updateOnlineIndicators() {
-            document.querySelectorAll('.user-name-tag').forEach(tag => {
-                const emailText = tag.getAttribute('data-email');
-                if (emailText) {
-                    let found = activeDevicesCache.find(d => d.account && d.account.trim().toLowerCase() === emailText.trim().toLowerCase());
-                    const isOnline = found && (found.status === 'approved' || found.account === 'officialwinmyat@gmail.com');
-                    let dot = tag.querySelector('.online-dot');
-                    let odot = tag.querySelector('.offline-dot');
-                    if (isOnline) {
-                        if (odot) odot.remove();
-                        if (!dot) {
-                            dot = document.createElement('span');
-                            dot.className = 'online-dot';
-                            tag.appendChild(dot);
-                        }
-                    } else {
-                        if (dot) dot.remove();
-                        if (!odot) {
-                            odot = document.createElement('span');
-                            odot.className = 'offline-dot';
-                            tag.appendChild(odot);
-                        }
-                    }
-                }
-            });
-        }
-
-        function loadChatHistory(roomName) {
-            socket.emit('join_room', {room: roomName});
-            fetch(`/get_history?room=${roomName}`)
-            .then(res => res.json())
-            .then(data => {
-                const stream = document.getElementById('historyStream');
-                stream.innerHTML = '';
-                data.reverse().forEach(item => appendMessageToStream(item, false));
-            });
-        }
-
-        function openPrivateChatWith(otherUserEmail) {
-            const myEmail = localStorage.getItem('wma_remember_email') || '';
-            const targetEmail = otherUserEmail.trim().toLowerCase();
-            
-            if (myEmail && myEmail.trim().toLowerCase() === targetEmail) {
-                alert("သင်ကိုယ်တိုင်နှင့် Private Chat ဖွင့်၍မရပါ။");
-                return;
-            }
-
-            let emails = [myEmail || 'user', targetEmail].sort();
-            currentRoom = `private_${emails[0]}_${emails[1]}`;
-            knownPrivateRooms.add(currentRoom);
-            updatePrivateChatSwitcherDropdown();
-            
-            let targetDisplayName = getDisplayNameForEmail(targetEmail);
-            document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${targetDisplayName}`;
-            document.getElementById('goToMainChatBtn').style.display = 'block';
-            
-            loadChatHistory(currentRoom);
-        }
-
-        function switchToMainChat() {
-            currentRoom = 'main_group';
-            document.getElementById('currentChatRoomTitle').innerText = "WeMeet - Main Group Chat";
-            document.getElementById('goToMainChatBtn').style.display = 'none';
-            document.getElementById('privateChatSwitcher').value = 'main_group';
-            loadChatHistory(currentRoom);
-        }
-
-        function switchPrivateChatFromDropdown(selectElem) {
-            const val = selectElem.value;
-            if (val === 'main_group') {
-                switchToMainChat();
-            } else if (val.startsWith('private_')) {
-                currentRoom = val;
-                let parts = val.replace('private_', '').split('_');
-                let myEmail = localStorage.getItem('wma_remember_email') || '';
-                let otherEmail = parts[0] === myEmail ? parts[1] : parts[0];
-                let otherDisplayName = getDisplayNameForEmail(otherEmail);
-                document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${otherDisplayName}`;
-                document.getElementById('goToMainChatBtn').style.display = 'block';
-                loadChatHistory(currentRoom);
-            }
-        }
-
-        function updatePrivateChatSwitcherDropdown() {
-            const switcher = document.getElementById('privateChatSwitcher');
-            if (!switcher) return;
-            switcher.innerHTML = `<option value="main_group">💬 Main Group Chat</option>`;
-            knownPrivateRooms.forEach(room => {
-                let parts = room.replace('private_', '').split('_');
-                let myEmail = localStorage.getItem('wma_remember_email') || '';
-                let otherEmail = parts[0] === myEmail ? parts[1] : parts[0];
-                let otherDisplayName = getDisplayNameForEmail(otherEmail);
-                let opt = document.createElement('option');
-                opt.value = room;
-                opt.innerText = `🔒 Private: ${otherDisplayName}`;
-                if (room === currentRoom) opt.selected = true;
-                switcher.appendChild(opt);
-            });
-        }
-
-        socket.on('broadcast_message', data => {
-            const myEmail = localStorage.getItem('wma_remember_email') || '';
-            if (data.room.startsWith('private_')) {
-                knownPrivateRooms.add(data.room);
-                updatePrivateChatSwitcherDropdown();
-            }
-            if (data.room === currentRoom) {
-                appendMessageToStream(data, true);
-            }
-        });
-
-        socket.on('message_deleted', data => {
-            const el = document.getElementById('msg-box-' + data.id);
-            if (el) el.remove();
-        });
-
-        function appendMessageToStream(item) {
-            const stream = document.getElementById('historyStream');
-            const div = document.createElement('div');
-            div.className = 'history-item';
-            div.id = 'msg-box-' + item.id;
-            
-            let displayName = getDisplayNameForEmail(item.user);
-            let userHtml = `<span class="user-name-tag" data-email="${item.user}" onclick="openPrivateChatWith('${item.user}')">${displayName}</span>`;
-            let contentHtml = '';
-            
-            if (item.type === 'text') {
-                contentHtml = `<div><b>${userHtml}:</b> ${item.content}</div>`;
-            } else if (item.type === 'voice') {
-                contentHtml = `<div><b>${userHtml} [Voice]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
-            } else if (item.type === 'file') {
-                if (item.filename && (item.filename.endsWith('.jpg') || item.filename.endsWith('.png') || item.filename.endsWith('.jpeg'))) {
-                    contentHtml = `<div><b>${userHtml} [Image]:</b><br><img src="${item.content}" class="chat-image-preview"></div>`;
-                } else {
-                    contentHtml = `<div><b>${userHtml} [File]:</b> <a href="${item.content}" download="${item.filename || 'download'}" style="color:var(--accent-color);">${item.filename || 'Download File'}</a></div>`;
-                }
-            }
-            
-            let actionButtons = `<div class="msg-actions"><button onclick="saveToDevice('${item.content}', '${item.filename || 'media'}')">Save</button><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button><button onclick="givePresentAction('${item.user}')">Present</button></div>`;
-            
-            div.innerHTML = contentHtml + actionButtons + `<div style="font-size:10px; color:#94a3b8; margin-top:4px;">${item.timestamp}</div>`;
-            stream.appendChild(div);
-            stream.scrollTop = stream.scrollHeight;
-        }
-
-        function givePresentAction(targetUser) {
-            let boxType = prompt("လက်ဆောင်အမျိုးအစားရွေးပါ (Rose / Orchid / Jasmine):", "Rose");
-            let qty = prompt("အရေအတွက်ထည့်ပါ:", "1");
-            if (boxType && qty) {
-                alert(`${targetUser} သို့ ${qty} ခု ပေးပို့ပြီးပါပြီ။`);
-            }
-        }
-
-        function saveToDevice(dataUrl, filename) {
-            const a = document.createElement('a');
-            a.href = dataUrl;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-        }
-
-        function deleteMessageItem(id) {
-            socket.emit('delete_message_item', {id: id, room: currentRoom});
         }
 
         function toggleRecordVoice() {
             const btn = document.getElementById('recBtn');
-            const options = document.getElementById('voiceOptions');
-            if (btn.innerText.includes("Record")) {
-                audioChunks = [];
-                navigator.mediaDevices.getUserMedia({audio: true}).then(stream => {
+            if (btn.innerText.includes('Record')) {
+                navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
                     mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
                     mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
                     mediaRecorder.onstop = () => {
-                        const audioBlob = new Blob(audioChunks, {type: 'audio/mp3'});
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                            window.tempVoiceData = reader.result;
-                            options.style.display = 'block';
-                        };
-                        reader.readAsDataURL(audioBlob);
+                        document.getElementById('voiceOptions').style.display = 'block';
                     };
                     mediaRecorder.start();
-                    btn.innerText = "Stop Recording...";
+                    btn.innerText = "Stop Recording (3s)";
                     setTimeout(() => {
                         if (mediaRecorder && mediaRecorder.state === 'recording') {
                             mediaRecorder.stop();
                             btn.innerText = "Record Voice (3s)";
                         }
                     }, 3000);
-                });
+                }).catch(err => alert("Mic permission denied"));
+            } else {
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                    btn.innerText = "Record Voice (3s)";
+                }
             }
         }
 
-        function sendVoice() {
-            if (window.tempVoiceData) {
-                let myEmail = localStorage.getItem('wma_remember_email') || 'user';
-                socket.emit('new_message', { user: myEmail, type: 'voice', content: window.tempVoiceData, store: '48 Hours', room: currentRoom });
+        function sendVoice(storeType) {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const base64Audio = e.target.result;
+                const devId = getDeviceId();
+                const email = localStorage.getItem('wma_remember_email') || '';
+                const userName = getUserDisplayName(email, devId);
+
+                socket.emit('new_message', {
+                    user: userName,
+                    type: 'audio',
+                    content: base64Audio,
+                    filename: 'voice_message.webm',
+                    store: storeType,
+                    room: currentRoom
+                });
                 document.getElementById('voiceOptions').style.display = 'none';
-                window.tempVoiceData = null;
+            };
+            reader.readAsDataURL(audioBlob);
+        }
+
+        function triggerVideoCall() {
+            document.getElementById('videoPopup').style.display = 'block';
+            navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+                localStream = stream;
+                document.getElementById('localVideo').srcObject = stream;
+                socket.emit('trigger_video_call', { room: currentRoom });
+            }).catch(err => alert("Camera/Mic error"));
+        }
+
+        function stopConference() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+            closePopup();
+        }
+
+        function closePopup() {
+            document.getElementById('videoPopup').style.display = 'none';
+        }
+
+        function toggleMuteSpeaker() {
+            isSpeakerMuted = !isSpeakerMuted;
+            document.getElementById('muteSpeakerBtn').innerText = isSpeakerMuted ? "Unmute Speaker" : "Mute Speaker";
+        }
+
+        function toggleMuteCamera() {
+            if (localStream) {
+                localStream.getVideoTracks().forEach(track => { track.enabled = !track.enabled; });
+                isCameraMuted = !isCameraMuted;
+                document.getElementById('muteCameraBtn').innerText = isCameraMuted ? "Unmute Camera" : "Mute Camera";
             }
         }
 
@@ -2068,18 +1814,28 @@ HTML_PAGE = """
             let val = textarea.value.trim();
             if (val.endsWith('=')) {
                 try {
-                    let expr = val.slice(0, -1);
-                    let result = eval(expr);
-                    textarea.value = val + ' ' + result;
+                    let expr = val.slice(0, -1).trim();
+                    let res = eval(expr);
+                    textarea.value = val + ' ' + res;
                 } catch(e) {}
             }
         }
 
         function sendText() {
-            const content = document.getElementById('textContent').value;
-            if (!content) return;
-            let myEmail = localStorage.getItem('wma_remember_email') || 'user';
-            socket.emit('new_message', { user: myEmail, type: 'text', content: content, store: '48 Hours', room: currentRoom });
+            const txt = document.getElementById('textContent').value.trim();
+            if (!txt) return;
+            const devId = getDeviceId();
+            const email = localStorage.getItem('wma_remember_email') || '';
+            const userName = getUserDisplayName(email, devId);
+
+            socket.emit('new_message', {
+                user: userName,
+                type: 'text',
+                content: txt,
+                filename: '',
+                store: '48 Hours',
+                room: currentRoom
+            });
             document.getElementById('textContent').value = '';
         }
 
@@ -2087,7 +1843,7 @@ HTML_PAGE = """
             if (input.files && input.files[0]) {
                 const file = input.files[0];
                 if (file.size > 50 * 1024 * 1024) {
-                    alert("File size 50 MB ထက် မကျော်ရပါ။");
+                    alert("File size exceeds 50MB limit.");
                     return;
                 }
                 selectedFileName = file.name;
@@ -2103,128 +1859,143 @@ HTML_PAGE = """
 
         function sendFile() {
             if (!selectedFileBase64) return;
-            let myEmail = localStorage.getItem('wma_remember_email') || 'user';
-            socket.emit('new_message', { user: myEmail, type: 'file', content: selectedFileBase64, filename: selectedFileName, store: '48 Hours', room: currentRoom });
-            document.getElementById('fileInput').value = '';
+            const devId = getDeviceId();
+            const email = localStorage.getItem('wma_remember_email') || '';
+            const userName = getUserDisplayName(email, devId);
+            let msgType = selectedFileName.match(/\.(jpeg|jpg|png|gif)$/i) ? 'image' : 'file';
+
+            socket.emit('new_message', {
+                user: userName,
+                type: msgType,
+                content: selectedFileBase64,
+                filename: selectedFileName,
+                store: '48 Hours',
+                room: currentRoom
+            });
+
             selectedFileBase64 = null;
+            selectedFileName = '';
+            document.getElementById('fileInput').value = '';
             document.getElementById('sendFileBtn').disabled = true;
             document.getElementById('sendFileBtn').style.opacity = '0.5';
         }
 
-        function triggerVideoCall() {
-            let myEmail = localStorage.getItem('wma_remember_email') || 'user';
-            socket.emit('trigger_video_call', {user: myEmail});
-            startConferenceUI(myEmail);
+        function loadChatHistory(room) {
+            fetch(`/get_history?room=${room}`)
+            .then(res => res.json())
+            .then(data => {
+                const stream = document.getElementById('historyStream');
+                stream.innerHTML = '';
+                data.reverse().forEach(msg => appendMessageToStream(msg));
+                stream.scrollTop = stream.scrollHeight;
+            });
         }
 
-        function startConferenceUI(callerName) {
-            document.getElementById('videoPopup').style.display = 'block';
-            let callerDisplayName = getDisplayNameForEmail(callerName);
-            document.getElementById('callerInfo').innerText = `Conference Initiated by: ${callerDisplayName}`;
-            navigator.mediaDevices.getUserMedia({video: true, audio: true})
-            .then(stream => {
-                localStream = stream;
-                document.getElementById('localVideo').srcObject = stream;
-                socket.emit('video_signal', {type: 'ready_peer', sender: socket.id});
-            }).catch(err => alert("Camera permission error: " + err));
+        function appendMessageToStream(msg) {
+            const stream = document.getElementById('historyStream');
+            const div = document.createElement('div');
+            div.className = 'history-item';
+            div.id = `msg_item_${msg.id}`;
+
+            let contentHtml = '';
+            if (msg.type === 'text') {
+                contentHtml = `<div>${escapeHtml(msg.content)}</div>`;
+            } else if (msg.type === 'image') {
+                contentHtml = `<div><b>[Image: ${msg.filename}]</b><br><img src="${msg.content}" class="chat-image-preview"></div>`;
+            } else if (msg.type === 'audio') {
+                contentHtml = `<div><b>[Voice Message]</b><br><audio controls src="${msg.content}"></audio></div>`;
+            } else if (msg.type === 'file') {
+                contentHtml = `<div><b>[File: ${msg.filename}]</b><br><a href="${msg.content}" download="${msg.filename}" style="color:var(--accent-color);">Download File</a></div>`;
+            }
+
+            div.innerHTML = `
+                <div style="font-weight:bold; color:var(--accent-color); margin-bottom:4px;">${escapeHtml(msg.user)} <span style="font-size:10px; color:#94a3b8;">(${msg.timestamp})</span></div>
+                ${contentHtml}
+                <div class="msg-actions">
+                    <button onclick="deleteMessageItem(${msg.id})">Delete</button>
+                </div>
+            `;
+            stream.appendChild(div);
+            stream.scrollTop = stream.scrollHeight;
         }
 
-        socket.on('video_signal_relay', async data => {
-            const senderId = data.sender;
-            if (senderId === socket.id) return;
-            if (data.type === 'ready_peer' || data.type === 'join_call') {
-                if (!localStream) return;
-                let pc = createPeerConnection(senderId);
-                let offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-                socket.emit('video_signal', {type: 'offer', offer: offer, sender: socket.id, target: senderId});
-            } else if (data.type === 'offer' && data.target === socket.id) {
-                let pc = createPeerConnection(senderId);
-                await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
-                let answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
-                socket.emit('video_signal', {type: 'answer', answer: answer, sender: socket.id, target: senderId});
-            } else if (data.type === 'answer' && data.target === socket.id) {
-                let pc = peerConnections[senderId];
-                if (pc) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-            } else if (data.type === 'candidate' && data.target === socket.id) {
-                let pc = peerConnections[senderId];
-                if (pc && data.candidate) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        function escapeHtml(text) {
+            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        function deleteMessageItem(id) {
+            socket.emit('delete_message_item', { id: id, room: currentRoom });
+        }
+
+        function registerDeviceWithServer(email) {
+            const devId = getDeviceId();
+            socket.emit('register_device', { device_id: devId, google_account: email });
+            socket.emit('join_room', { room: currentRoom });
+        }
+
+        function resetStorage() {
+            socket.emit('reset_storage');
+        }
+
+        function switchToMainChat() {
+            currentRoom = 'main_group';
+            document.getElementById('currentChatRoomTitle').innerText = 'WeMeet - Main Group Chat';
+            document.getElementById('goToMainChatBtn').style.display = 'none';
+            socket.emit('join_room', { room: currentRoom });
+            loadChatHistory(currentRoom);
+        }
+
+        function switchPrivateChatFromDropdown(select) {
+            let room = select.value;
+            if (room && room !== 'main_group') {
+                currentRoom = room;
+                document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${room}`;
+                document.getElementById('goToMainChatBtn').style.display = 'block';
+                socket.emit('join_room', { room: currentRoom });
+                loadChatHistory(currentRoom);
+            }
+        }
+
+        function logoutUser() {
+            fetch('/logout', { method: 'POST' }).then(() => {
+                localStorage.removeItem('wma_remember_email');
+                localStorage.removeItem('wma_remember_token');
+                localStorage.removeItem('wma_is_admin');
+                location.reload();
+            });
+        }
+
+        socket.on('broadcast_message', function(msg) {
+            if (msg.room === currentRoom) {
+                appendMessageToStream(msg);
             }
         });
 
-        function createPeerConnection(remoteSocketId) {
-            if (peerConnections[remoteSocketId]) return peerConnections[remoteSocketId];
-            let pc = new RTCPeerConnection(servers);
-            peerConnections[remoteSocketId] = pc;
-            if (localStream) localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-            pc.onicecandidate = event => {
-                if (event.candidate) socket.emit('video_signal', {type: 'candidate', candidate: event.candidate, sender: socket.id, target: remoteSocketId});
-            };
-            pc.ontrack = event => {
-                let gridContainer = document.getElementById('videoGridContainer');
-                let remoteVideoId = 'remoteVideo_' + remoteSocketId;
-                let existingBox = document.getElementById(remoteVideoId);
-                if (!existingBox) {
-                    let remoteBox = document.createElement('div');
-                    remoteBox.className = 'video-box';
-                    remoteBox.id = remoteVideoId;
-                    remoteBox.innerHTML = `<video autoplay playsinline></video><div>Participant</div>`;
-                    gridContainer.appendChild(remoteBox);
-                    existingBox = remoteBox;
-                }
-                let videoElement = existingBox.querySelector('video');
-                if (videoElement && event.streams[0]) videoElement.srcObject = event.streams[0];
-            };
-            return pc;
-        }
+        socket.on('message_deleted', function(data) {
+            const elem = document.getElementById(`msg_item_${data.id}`);
+            if (elem) elem.remove();
+        });
 
-        function toggleMuteSpeaker() {
-            if (!localStream) return;
-            isSpeakerMuted = !isSpeakerMuted;
-            localStream.getAudioTracks().forEach(track => { track.enabled = !isSpeakerMuted; });
-            const btn = document.getElementById('muteSpeakerBtn');
-            btn.innerText = isSpeakerMuted ? "Unmute Speaker" : "Mute Speaker";
-            btn.style.background = isSpeakerMuted ? "#dc2626" : "#ca8a04";
-        }
-
-        function toggleMuteCamera() {
-            if (!localStream) return;
-            isCameraMuted = !isCameraMuted;
-            localStream.getVideoTracks().forEach(track => { track.enabled = !isCameraMuted; });
-            const btn = document.getElementById('muteCameraBtn');
-            btn.innerText = isCameraMuted ? "Unmute Camera" : "Mute Camera";
-            btn.style.background = isCameraMuted ? "#dc2626" : "#2563eb";
-        }
-
-        function stopConference() {
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-                localStream = null;
-            }
-            for (let id in peerConnections) { peerConnections[id].close(); }
-            peerConnections = {};
-            let gridContainer = document.getElementById('videoGridContainer');
-            gridContainer.innerHTML = '<div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>';
-            closePopup();
-        }
-
-        function closePopup() { document.getElementById('videoPopup').style.display = 'none'; }
-
-        function resetStorage() {
-            if (confirm("Are you sure you want to reset storage? (Note: User and gift data are permanent and will not be deleted)")) {
-                socket.emit('reset_storage');
-            }
-        }
-
-        socket.on('storage_reset', () => {
+        socket.on('storage_reset', function() {
             document.getElementById('historyStream').innerHTML = '';
-            alert("Message history storage has been reset, but user profile and gift data remain intact.");
+        });
+
+        socket.on('online_users_refresh', function() {
+            fetch('/get_devices')
+            .then(res => res.json())
+            .then(devices => {
+                const container = document.getElementById('onlineUsersListContainer');
+                if (!container) return;
+                container.innerHTML = '';
+                devices.forEach(d => {
+                    let div = document.createElement('div');
+                    div.style.padding = '4px 0';
+                    div.innerHTML = `<span>${d.account} (${d.device_id.substring(0,8)}...)</span> <span class="online-dot"></span>`;
+                    container.appendChild(div);
+                });
+            });
         });
     </script>
 </body>
 </html>
-"""
-
-if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+```[cite: 12]
