@@ -97,7 +97,6 @@ def admin_login():
     password = data.get('password', '')
     master_key = data.get('master_key', '').strip()
     
-    # Universal code (master key) check on render server
     expected_master_key = os.environ.get("UNIVERSAL_MASTER_KEY", "852456")
     
     if email == 'officialwinmyat@gmail.com' and master_key == expected_master_key:
@@ -120,7 +119,6 @@ def signup():
         conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
         
-        # Check if banned
         cursor.execute('SELECT status FROM devices WHERE device_id = ?', (device_id,))
         dev_row = cursor.fetchone()
         if dev_row and dev_row[0] == 'banned':
@@ -138,7 +136,7 @@ def signup():
             else:
                 cursor.execute('UPDATE users SET password = ?, device_id = ?, signup_time = ? WHERE email = ?', (password, device_id, now, email))
         else:
-            cursor.execute('INSERT INTO users (email, password, device_id, is_verified, account_duration, signup_time) VALUES (?, ?, ?, 0, '3 months', ?)', (email, password, device_id, now))
+            cursor.execute('INSERT INTO users (email, password, device_id, is_verified, account_duration, signup_time) VALUES (?, ?, ?, 0, "3 months", ?)', (email, password, device_id, now))
         
         conn.commit()
         conn.close()
@@ -156,7 +154,6 @@ def verify_code():
     
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
-    # Check signup time within 15 minutes and matching admin-assigned verification code from devices/users table
     cursor.execute('SELECT signup_time, verification_code FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
     
@@ -194,7 +191,6 @@ def login():
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     
-    # Check if device is banned
     cursor.execute('SELECT status FROM devices WHERE device_id = ?', (device_id,))
     dev_row = cursor.fetchone()
     if dev_row and dev_row[0] == 'banned':
@@ -345,7 +341,7 @@ def admin_update_user_settings():
         cursor.execute('DELETE FROM users WHERE email = ?', (email,))
     elif action == 'ban':
         cursor.execute('UPDATE users SET verification_code = NULL WHERE email = ?', (email,))
-        cursor.execute('UPDATE devices SET status = 'banned' WHERE google_account = ?', (email,))
+        cursor.execute('UPDATE devices SET status = "banned" WHERE google_account = ?', (email,))
     else:
         if code:
             cursor.execute('UPDATE users SET verification_code = ?, account_duration = ? WHERE email = ?', (code, duration, email))
@@ -775,7 +771,6 @@ HTML_PAGE = """
                 <button onclick="autoGenerateAnimeTheme()">Randomize Anime Character Theme</button>
             </div>
 
-            <!-- Updated Admin Control Panel with 15 mins signups, verification code input box, duration settings, remove, and ban -->
             <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
                 <h4 style="color: #f59e0b;">👑 Admin Control Panel (Recent 15 Mins Signups)</h4>
                 <div style="font-size: 11px; color: #cbd5e1; margin-bottom: 8px;">လတ်တလော ၁၅ မိနစ်အတွင်း sign up နှိပ်ထားသော user များ:</div>
@@ -838,7 +833,6 @@ HTML_PAGE = """
             fetch('/ping').catch(e => {});
         }, 300000);
 
-        // Periodic check for admin panel recent signups if admin
         setInterval(() => {
             const isAdmin = localStorage.getItem('wma_is_admin') === 'true';
             if (isAdmin) {
@@ -914,7 +908,6 @@ HTML_PAGE = """
         function getDeviceId() {
             let devId = localStorage.getItem('wma_device_id');
             if (!devId) {
-                // Prefer manufacturer or fallback to code generated device id
                 devId = 'device_gen_' + Math.random().toString(36).substring(2, 15);
                 localStorage.setItem('wma_device_id', devId);
             }
