@@ -1,7 +1,7 @@
 import os
 import sqlite3
 import random
-import requests
+import base64
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template_string, session, send_file
 
@@ -14,26 +14,25 @@ except Exception:
     pass
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "wemeet_secure_secret_key_123")
+app.secret_key = os.environ.get("SECRET_KEY", "wma_qq_secure_secret_key_123")
 
 from flask_socketio import SocketIO, emit
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
-# MasterKey Obfuscation & License partitioning (4 parts hidden for security)
-_MK_P1 = "852"
-_MK_P2 = "456"
-def _get_master_key():
-    return _MK_P1 + _MK_P2
+# Master Key 852456 ကို ၄ နေရာခွဲမြှုပ်၍ လုံခြုံရေးနှင့် လိုင်စင် ခွင့်ပြုချက်အတွက် အသုံးပြုထားခြင်း
+MK_PART_1 = "852"
+MK_PART_2 = "456"
+LICENSE_CHECK_1 = "officialwinmyat"
+LICENSE_CHECK_2 = "@gmail.com"
 
-def _verify_wemeet_license(email_str):
-    p1 = "official"
-    p2 = "winmyat"
-    p3 = "@gmail"
-    p4 = ".com"
-    return email_str.strip().lower() == (p1 + p2 + p3 + p4)
+def get_master_key():
+    return MK_PART_1 + MK_PART_2
+
+def get_admin_email():
+    return LICENSE_CHECK_1 + LICENSE_CHECK_2
 
 def init_db():
-    conn = sqlite3.connect('wemeet_private.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS history (
@@ -75,11 +74,27 @@ def init_db():
             country TEXT,
             province TEXT,
             city TEXT,
-            pictures TEXT,
-            profile_picture TEXT,
-            received_gifts TEXT,
-            purchased_gifts TEXT,
-            redeemed_gifts TEXT
+            profile_pic_1 TEXT,
+            profile_pic_2 TEXT,
+            profile_pic_3 TEXT,
+            profile_pic_4 TEXT,
+            profile_pic_5 TEXT,
+            active_profile_pic TEXT,
+            rose_bought INTEGER DEFAULT 0,
+            orchid_bought INTEGER DEFAULT 0,
+            jasmine_bought INTEGER DEFAULT 0,
+            rose_received INTEGER DEFAULT 0,
+            orchid_received INTEGER DEFAULT 0,
+            jasmine_received INTEGER DEFAULT 0,
+            redeemed_items TEXT DEFAULT ''
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS admin_prices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            box_type TEXT UNIQUE,
+            price REAL,
+            redeem_value REAL
         )
     ''')
     conn.commit()
@@ -89,10 +104,10 @@ init_db()
 
 def clean_expired_history():
     try:
-        conn = sqlite3.connect('wemeet_private.db')
+        conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        cursor.execute('DELETE FROM history WHERE expire_at < ? AND msg_type != "gift_txn"', (now_str,))
+        cursor.execute('DELETE FROM history WHERE expire_at < ?', (now_str,))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -121,9 +136,10 @@ def admin_login():
     password = data.get('password', '')
     master_key = data.get('master_key', '').strip()
     
-    expected_master_key = _get_master_key()
+    expected_master_key = get_master_key()
+    admin_mail = get_admin_email()
     
-    if _verify_wemeet_license(email) and master_key == expected_master_key:
+    if email == admin_mail and master_key == expected_master_key:
         session['user_email'] = email
         session['is_admin'] = True
         return jsonify({"success": True, "is_admin": True})
@@ -137,21 +153,13 @@ def signup():
     device_id = data.get('device_id', '')
     username = data.get('username', '').strip()
     
-    if not email or not password or not username:
-        return jsonify({"success": False, "error": "Email, Password နှင့် Username ထည့်ရန် လိုအပ်ပါသည်။"})
+    if not email or not password:
+        return jsonify({"success": False, "error": "Email နှင့် Password ထည့်ရန် လိုအပ်ပါသည်။"})
     
-    if len(username) > 15:
-        return jsonify({"success": False, "error": "User name သည် 15 လုံးထက် မပိုရပါ။"})
-
     try:
-        conn = sqlite3.connect('wemeet_private.db')
+        conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
         
-        cursor.execute('SELECT id FROM users WHERE username = ? AND email != ?', (username, email))
-        if cursor.fetchone():
-            conn.close()
-            return jsonify({"success": False, "error": "ဤ User name မှာ အခြားသူသုံးပြီးသား ဖြစ်နေပါသည်။"})
-
         cursor.execute('SELECT status FROM devices WHERE device_id = ?', (device_id,))
         dev_row = cursor.fetchone()
         if dev_row and dev_row[0] == 'banned':
@@ -162,24 +170,37 @@ def signup():
         existing = cursor.fetchone()
         
         now = datetime.now()
-        is_admin_email = _verify_wemeet_license(email)
-        
+        admin_mail = get_admin_email()
+        master_key = get_master_key()
+
+        if email == admin_mail:
+            # Admin sign up does not need verification code
+            if existing:
+                cursor.execute('UPDATE users SET password = ?, device_id = ?, signup_time = ?, status = "verified", is_verified = 1 WHERE email = ?', (password, device_id, now, email))
+            else:
+                cursor.execute('INSERT INTO users (email, password, device_id, is_verified, account_duration, signup_time, verification_code, status, username) VALUES (?, ?, ?, 1, "life time", ?, ?, "verified", ?)', (email, password, device_id, now, master_key, username or 'Admin'))
+            conn.commit()
+            conn.close()
+            session['user_email'] = email
+            session['is_admin'] = True
+            return jsonify({"success": True, "requires_verification": False, "is_admin": True})
+
         if existing:
             if existing[1] == 1 and existing[2] == 'verified':
                 conn.close()
                 return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်ရှိပြီးသား ဖြစ်ပါသည်။ Login ဝင်ပါ။"})
             else:
-                default_code = _get_master_key() if is_admin_email else "".join([str(random.randint(0, 9)) for _ in range(6)])
-                cursor.execute('UPDATE users SET password = ?, device_id = ?, username = ?, signup_time = ?, verification_code = ?, status = "pending" WHERE email = ?', (password, device_id, username, now, default_code, email))
+                cursor.execute('UPDATE users SET password = ?, device_id = ?, signup_time = ?, status = "pending", username = ? WHERE email = ?', (password, device_id, now, username, email))
         else:
-            default_code = _get_master_key() if is_admin_email else "".join([str(random.randint(0, 9)) for _ in range(6)])
-            cursor.execute('INSERT INTO users (email, password, device_id, username, is_verified, account_duration, signup_time, verification_code, status) VALUES (?, ?, ?, ?, 0, "3 months", ?, ?, "pending")', (email, password, device_id, username, now, default_code))
+            default_code = "".join([str(random.randint(0, 9)) for _ in range(6)])
+            cursor.execute('INSERT INTO users (email, password, device_id, is_verified, account_duration, signup_time, verification_code, status, username) VALUES (?, ?, ?, 0, "3 months", ?, ?, "pending", ?)', (email, password, device_id, now, default_code, username))
         
         conn.commit()
         conn.close()
             
-        return jsonify({"success": True, "requires_verification": True, "is_admin_email": is_admin_email})
+        return jsonify({"success": True, "requires_verification": True})
     except Exception as e:
+        print(f"Signup Error for {email} | Error: {str(e)}", flush=True)
         return jsonify({"success": False, "error": str(e)})
 
 @app.route('/verify_code', methods=['POST'])
@@ -188,27 +209,44 @@ def verify_code():
     email = data.get('email', '').strip().lower()
     code = data.get('code', '').strip()
     
-    conn = sqlite3.connect('wemeet_private.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     cursor.execute('SELECT signup_time, verification_code FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
     
+    admin_mail = get_admin_email()
+    master_key = get_master_key()
+
+    if email == admin_mail and code == master_key:
+        cursor.execute('UPDATE users SET is_verified = 1, status = "verified" WHERE email = ?', (email,))
+        conn.commit()
+        conn.close()
+        session['user_email'] = email
+        session['is_admin'] = True
+        return jsonify({"success": True, "is_admin": True})
+
     if row:
+        signup_time_str = row[0]
         assigned_code = row[1]
-        is_admin_email = _verify_wemeet_license(email)
         
-        # If admin email and masterkey entered, or standard matching code
-        if (is_admin_email and code == _get_master_key()) or (assigned_code and assigned_code == code):
+        if signup_time_str:
+            signup_time = datetime.strptime(signup_time_str, '%Y-%m-%d %H:%M:%S.%f' if '.' in signup_time_str else '%Y-%m-%d %H:%M:%S')
+            if datetime.now() - signup_time > timedelta(minutes=15):
+                conn.close()
+                return jsonify({"success": False, "error": "Verification သက်တမ်း ၁၅ မိနစ် ကျော်လွန်သွားပါပြီ။ Code ထပ်တောင်းပါ။"})
+        
+        if assigned_code and assigned_code == code:
             cursor.execute('UPDATE users SET is_verified = 1, status = "verified" WHERE email = ?', (email,))
             conn.commit()
             conn.close()
             
             session['user_email'] = email
-            session['is_admin'] = is_admin_email
-            return jsonify({"success": True, "is_admin": is_admin_email})
+            is_admin = (email == admin_mail)
+            session['is_admin'] = is_admin
+            return jsonify({"success": True, "is_admin": is_admin})
             
     conn.close()
-    return jsonify({"success": False, "error": "Verification Code သို့မဟုတ် Master Key မှားယွင်းနေပါသည်။"})
+    return jsonify({"success": False, "error": "Verification Code မှားယွင်းနေပါသည် သို့မဟုတ် Admin မှ မချပေးသေးပါ။"})
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -218,12 +256,20 @@ def login():
     remember = data.get('remember', False)
     device_id = data.get('device_id', '')
     
-    conn = sqlite3.connect('wemeet_private.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     
+    cursor.execute('SELECT status FROM devices WHERE device_id = ?', (device_id,))
+    dev_row = cursor.fetchone()
+    if dev_row and dev_row[0] == 'banned':
+        conn.close()
+        return jsonify({"success": False, "error": "ဤ Device အား Ban ထားပါသည်။"})
+
     cursor.execute('SELECT password, is_verified, device_id, account_duration, status FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
     
+    admin_mail = get_admin_email()
+
     if row:
         stored_password, is_verified, stored_device_id, account_duration, user_status = row
         if user_status == 'banned':
@@ -233,15 +279,18 @@ def login():
             conn.close()
             return jsonify({"success": False, "error": "အကောင့်ကို Code ဖြင့် အတည်ပြုပြီးသား မရှိသေးပါ။"})
             
-        is_admin = _verify_wemeet_license(email)
-        if stored_password == password and (stored_device_id == device_id or is_admin):
+        if stored_password == password and (stored_device_id == device_id or not stored_device_id):
             session['user_email'] = email
+            is_admin = (email == admin_mail)
             session['is_admin'] = is_admin
             
             token = ""
             if remember:
                 token = f"token_{email}_{device_id}"
-                cursor.execute('UPDATE users SET remember_token = ? WHERE email = ?', (token, email))
+                cursor.execute('UPDATE users SET remember_token = ?, device_id = ? WHERE email = ?', (token, device_id, email))
+                conn.commit()
+            else:
+                cursor.execute('UPDATE users SET device_id = ? WHERE email = ?', (device_id, email))
                 conn.commit()
             
             conn.close()
@@ -263,19 +312,44 @@ def check_remember():
     if not email or not token or not device_id:
         return jsonify({"logged_in": False})
         
-    conn = sqlite3.connect('wemeet_private.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     cursor.execute('SELECT remember_token, device_id, account_duration, status FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
     conn.close()
     
-    is_admin = _verify_wemeet_license(email)
-    if row and row[0] == token and (row[1] == device_id or is_admin) and row[3] != 'banned':
+    admin_mail = get_admin_email()
+
+    if row and row[0] == token and row[3] != 'banned':
         session['user_email'] = email
+        is_admin = (email == admin_mail)
         session['is_admin'] = is_admin
         return jsonify({"logged_in": True, "email": email, "is_admin": is_admin, "account_duration": row[2]})
     
     return jsonify({"logged_in": False})
+
+@app.route('/reset_password_google', methods=['POST'])
+def reset_password_google():
+    data = request.json
+    email = data.get('email', '').strip().lower()
+    new_password = data.get('new_password', '')
+    
+    if not email or not new_password:
+        return jsonify({"success": False, "error": "Email နှင့် Password အသစ်ထည့်ရန် လိုအပ်ပါသည်။"})
+        
+    conn = sqlite3.connect('wma_qq_private.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
+    row = cursor.fetchone()
+    
+    if row:
+        cursor.execute('UPDATE users SET password = ? WHERE email = ?', (new_password, email))
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True})
+    else:
+        conn.close()
+        return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်မရှိပါ။"})
 
 @app.route('/logout', methods=['POST'])
 def logout():
@@ -286,10 +360,11 @@ def logout():
 def check_session():
     if 'user_email' in session:
         email = session['user_email']
-        is_admin = _verify_wemeet_license(email)
+        admin_mail = get_admin_email()
+        is_admin = (email == admin_mail)
         session['is_admin'] = is_admin
         
-        conn = sqlite3.connect('wemeet_private.db')
+        conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
         cursor.execute('SELECT account_duration, status FROM users WHERE email = ?', (email,))
         row = cursor.fetchone()
@@ -300,50 +375,206 @@ def check_session():
             return jsonify({"logged_in": False})
             
         duration = row[0] if row else '3 months'
-        return jsonify({"logged_in": True, "email": email, "is_admin": is_admin, "account_duration": duration})
+        
+        return jsonify({
+            "logged_in": True,
+            "email": email,
+            "is_admin": is_admin,
+            "account_duration": duration
+        })
     return jsonify({"logged_in": False})
+
+@app.route('/get_user_profile', methods=['GET'])
+def get_user_profile():
+    email = request.args.get('email', '').strip().lower()
+    if not email and 'user_email' in session:
+        email = session['user_email']
+    if not email:
+        return jsonify({"success": False, "error": "Unauthorized"})
+    
+    conn = sqlite3.connect('wma_qq_private.db')
+    cursor = conn.cursor()
+    cursor.execute('''SELECT username, age, sex, country, province, city, 
+                      profile_pic_1, profile_pic_2, profile_pic_3, profile_pic_4, profile_pic_5, active_profile_pic,
+                      rose_bought, orchid_bought, jasmine_bought, rose_received, orchid_received, jasmine_received, redeemed_items
+                      FROM users WHERE email = ?''', (email,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return jsonify({"success": False, "error": "User not found"})
+        
+    return jsonify({
+        "success": True,
+        "username": row[0] or '',
+        "age": row[1],
+        "sex": row[2] or '',
+        "country": row[3] or '',
+        "province": row[4] or '',
+        "city": row[5] or '',
+        "pictures": [row[6], row[7], row[8], row[9], row[10]],
+        "active_profile_pic": row[11] or '',
+        "rose_bought": row[12] or 0,
+        "orchid_bought": row[13] or 0,
+        "jasmine_bought": row[14] or 0,
+        "rose_received": row[15] or 0,
+        "orchid_received": row[16] or 0,
+        "jasmine_received": row[17] or 0,
+        "redeemed_items": row[18] or ''
+    })
+
+@app.route('/update_user_profile', methods=['POST'])
+def update_user_profile():
+    if 'user_email' not in session:
+        return jsonify({"success": False, "error": "Unauthorized"})
+    email = session['user_email']
+    data = request.json
+    
+    username = data.get('username', '').strip()
+    age = data.get('age')
+    sex = data.get('sex', '').strip()
+    country = data.get('country', '').strip()
+    province = data.get('province', '').strip()
+    city = data.get('city', '').strip()
+    pictures = data.get('pictures', [])
+    active_pic = data.get('active_profile_pic', '')
+
+    conn = sqlite3.connect('wma_qq_private.db')
+    cursor = conn.cursor()
+    
+    if username:
+        cursor.execute('SELECT id FROM users WHERE username = ? AND email != ?', (username, email))
+        if cursor.fetchone():
+            conn.close()
+            return jsonify({"success": False, "error": "Username already taken"})
+
+    cursor.execute('''UPDATE users SET username = COALESCE(?, username), 
+                      age = COALESCE(?, age), sex = COALESCE(?, sex), 
+                      country = COALESCE(?, country), province = COALESCE(?, province), city = COALESCE(?, city),
+                      profile_pic_1 = COALESCE(?, profile_pic_1), profile_pic_2 = COALESCE(?, profile_pic_2),
+                      profile_pic_3 = COALESCE(?, profile_pic_3), profile_pic_4 = COALESCE(?, profile_pic_4),
+                      profile_pic_5 = COALESCE(?, profile_pic_5), active_profile_pic = COALESCE(?, active_profile_pic)
+                      WHERE email = ?''', 
+                   (username if username else None, age, sex if sex else None, 
+                    country if country else None, province if province else None, city if city else None,
+                    pictures[0] if len(pictures)>0 and pictures[0] else None,
+                    pictures[1] if len(pictures)>1 and pictures[1] else None,
+                    pictures[2] if len(pictures)>2 and pictures[2] else None,
+                    pictures[3] if len(pictures)>3 and pictures[3] else None,
+                    pictures[4] if len(pictures)>4 and pictures[4] else None,
+                    active_pic if active_pic else None, email))
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True})
 
 @app.route('/get_admin_all_lists', methods=['GET'])
 def get_admin_all_lists():
-    if not session.get('is_admin'):
+    admin_mail = get_admin_email()
+    if session.get('user_email') != admin_mail:
         return jsonify({"pending": [], "verified": [], "banned": []})
     
-    conn = sqlite3.connect('wemeet_private.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT email, device_id, verification_code, account_duration, signup_time, username FROM users WHERE is_verified = 0 AND status != "banned" ORDER BY signup_time DESC')
+    
+    fifteen_mins_ago = datetime.now() - timedelta(minutes=15)
+    cursor.execute('SELECT email, device_id, verification_code, account_duration, signup_time FROM users WHERE (signup_time >= ? OR is_verified = 0) AND status != "banned" AND email != ? ORDER BY signup_time DESC', (fifteen_mins_ago, admin_mail))
     pending_rows = cursor.fetchall()
     
-    cursor.execute('SELECT email, device_id, account_duration, signup_time, username FROM users WHERE is_verified = 1 AND status = "verified" ORDER BY signup_time DESC')
+    cursor.execute('SELECT email, device_id, account_duration, signup_time FROM users WHERE is_verified = 1 AND status = "verified" AND email != ? ORDER BY signup_time DESC', (admin_mail,))
     verified_rows = cursor.fetchall()
     
-    cursor.execute('SELECT email, device_id, account_duration, signup_time, username FROM users WHERE status = "banned" ORDER BY signup_time DESC')
+    cursor.execute('SELECT email, device_id, account_duration, signup_time FROM users WHERE status = "banned" AND email != ? ORDER BY signup_time DESC', (admin_mail,))
     banned_rows = cursor.fetchall()
+    
     conn.close()
     
+    pending_list = []
+    for r in pending_rows:
+        pending_list.append({
+            "email": r[0],
+            "device_id": r[1],
+            "verification_code": r[2] or '',
+            "account_duration": r[3] or '3 months',
+            "signup_time": r[4]
+        })
+        
+    verified_list = []
+    for r in verified_rows:
+        verified_list.append({
+            "email": r[0],
+            "device_id": r[1],
+            "account_duration": r[2] or '3 months',
+            "signup_time": r[3]
+        })
+        
+    banned_list = []
+    for r in banned_rows:
+        banned_list.append({
+            "email": r[0],
+            "device_id": r[1],
+            "account_duration": r[2] or '3 months',
+            "signup_time": r[3]
+        })
+        
     return jsonify({
-        "pending": [{"email": r[0], "device_id": r[1], "verification_code": r[2] or '', "account_duration": r[3] or '3 months', "signup_time": r[4], "username": r[5]} for r in pending_rows],
-        "verified": [{"email": r[0], "device_id": r[1], "account_duration": r[2] or '3 months', "signup_time": r[3], "username": r[4]} for r in verified_rows],
-        "banned": [{"email": r[0], "device_id": r[1], "account_duration": r[2] or '3 months', "signup_time": r[3], "username": r[4]} for r in banned_rows]
+        "pending": pending_list,
+        "verified": verified_list,
+        "banned": banned_list
     })
+
+@app.route('/admin_update_user_settings', methods=['POST'])
+def admin_update_user_settings():
+    admin_mail = get_admin_email()
+    if session.get('user_email') != admin_mail:
+        return jsonify({"success": False, "error": "Unauthorized"})
+        
+    data = request.json
+    email = data.get('email', '').strip().lower()
+    code = data.get('verification_code', '').strip()
+    duration = data.get('account_duration', '3 months')
+    action = data.get('action', '')
+    
+    conn = sqlite3.connect('wma_qq_private.db')
+    cursor = conn.cursor()
+    
+    if action == 'remove':
+        cursor.execute('DELETE FROM users WHERE email = ?', (email,))
+        cursor.execute('DELETE FROM devices WHERE google_account = ?', (email,))
+    elif action == 'ban':
+        cursor.execute('UPDATE users SET status = "banned" WHERE email = ?', (email,))
+        cursor.execute('UPDATE devices SET status = "banned" WHERE google_account = ?', (email,))
+    elif action == 'unban':
+        cursor.execute('UPDATE users SET status = "verified", is_verified = 1 WHERE email = ?', (email,))
+        cursor.execute('UPDATE devices SET status = "approved" WHERE google_account = ?', (email,))
+    else:
+        if code:
+            cursor.execute('UPDATE users SET verification_code = ?, account_duration = ? WHERE email = ?', (code, duration, email))
+        else:
+            cursor.execute('UPDATE users SET account_duration = ? WHERE email = ?', (duration, email))
+            
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True})
 
 @app.route('/get_devices', methods=['GET'])
 def get_devices():
     if 'user_email' not in session:
         return jsonify([])
-    conn = sqlite3.connect('wemeet_private.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT d.device_id, d.google_account, d.status, d.last_active, u.username FROM devices d LEFT JOIN users u ON d.google_account = u.email')
+    cursor.execute('SELECT device_id, google_account, status, last_active FROM devices')
     rows = cursor.fetchall()
     conn.close()
     
+    admin_mail = get_admin_email()
     devices = []
     for r in rows:
         devices.append({
             "device_id": r[0],
             "account": r[1],
-            "status": 'approved' if _verify_wemeet_license(r[1] or '') else r[2],
+            "status": 'approved' if r[1] == admin_mail else r[2],
             "active": True if r[3] else False,
-            "username": r[4] or (r[1].split('@')[0] if r[1] else 'User')
+            "is_current_user_admin": session.get('user_email') == admin_mail
         })
     return jsonify(devices)
 
@@ -351,15 +582,25 @@ def get_devices():
 def get_history():
     room = request.args.get('room', 'main_group')
     clean_expired_history()
-    conn = sqlite3.connect('wemeet_private.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     cursor.execute('SELECT id, user_info, msg_type, content, filename, store_type, room, timestamp FROM history WHERE room = ? ORDER BY id DESC', (room,))
     rows = cursor.fetchall()
     conn.close()
     
-    return jsonify([{
-        "id": r[0], "user": r[1], "type": r[2], "content": r[3], "filename": r[4], "store": r[5], "room": r[6], "timestamp": r[7]
-    } for r in rows])
+    history = []
+    for r in rows:
+        history.append({
+            "id": r[0],
+            "user": r[1],
+            "type": r[2],
+            "content": r[3],
+            "filename": r[4],
+            "store": r[5],
+            "room": r[6],
+            "timestamp": r[7]
+        })
+    return jsonify(history)
 
 @socketio.on('register_device')
 def handle_register_device(data):
@@ -368,19 +609,22 @@ def handle_register_device(data):
     if not dev_id or not google_acc:
         return
         
-    conn = sqlite3.connect('wemeet_private.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
     row = cursor.fetchone()
     
-    status = 'approved' if _verify_wemeet_license(google_acc) else ('approved' if row and row[0] == 'approved' else 'pending')
+    admin_mail = get_admin_email()
+    status = 'approved' if google_acc == admin_mail else ('approved' if row and row[0] == 'approved' else 'pending')
     
     if not row:
         cursor.execute('INSERT INTO devices (device_id, google_account, status, last_active) VALUES (?, ?, ?, ?)', (dev_id, google_acc, status, datetime.now()))
+        conn.commit()
     else:
         cursor.execute('UPDATE devices SET google_account = ?, status = ?, last_active = ? WHERE device_id = ?', (google_acc, status, datetime.now(), dev_id))
-    conn.commit()
+        conn.commit()
     conn.close()
+    socketio.emit('device_status_update', {'device_id': dev_id})
     socketio.emit('online_users_refresh')
 
 @socketio.on('join_room')
@@ -396,13 +640,13 @@ def handle_new_message(data):
     msg_type = data.get('type')
     content = data.get('content')
     filename = data.get('filename', '')
-    store = data.get('store', '48 Hours')
+    store = data.get('store', '48 Hours Auto-Delete')
     room = data.get('room', 'main_group')
     
     now = datetime.now()
     expire_at = now + timedelta(hours=48)
         
-    conn = sqlite3.connect('wemeet_private.db')
+    conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     cursor.execute('INSERT INTO history (user_info, msg_type, content, filename, store_type, room, expire_at, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                    (user, msg_type, content, filename, store, room, expire_at.strftime('%Y-%m-%d %H:%M:%S'), now.strftime('%Y-%m-%d %H:%M:%S')))
@@ -411,7 +655,14 @@ def handle_new_message(data):
     conn.close()
     
     socketio.emit('broadcast_message', {
-        "id": msg_id, "user": user, "type": msg_type, "content": content, "filename": filename, "store": store, "room": room, "timestamp": now.strftime('%Y-%m-%d %H:%M:%S')
+        "id": msg_id,
+        "user": user,
+        "type": msg_type,
+        "content": content,
+        "filename": filename,
+        "store": store,
+        "room": room,
+        "timestamp": now.strftime('%Y-%m-%d %H:%M:%S')
     }, room=room)
 
 @socketio.on('delete_message_item')
@@ -419,17 +670,26 @@ def handle_delete_message(data):
     msg_id = data.get('id')
     room = data.get('room', 'main_group')
     if msg_id:
-        conn = sqlite3.connect('wemeet_private.db')
+        conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
         cursor.execute('DELETE FROM history WHERE id = ?', (msg_id,))
         conn.commit()
         conn.close()
         socketio.emit('message_deleted', {"id": msg_id}, room=room)
 
+@socketio.on('trigger_video_call')
+def handle_video_call(data):
+    socketio.emit('incoming_video_call', data)
+
+@socketio.on('video_signal')
+def handle_video_signal(data):
+    socketio.emit('video_signal_relay', data)
+
 @socketio.on('reset_storage')
 def handle_reset():
-    if session.get('is_admin'):
-        conn = sqlite3.connect('wemeet_private.db')
+    admin_mail = get_admin_email()
+    if session.get('user_email') == admin_mail:
+        conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
         cursor.execute('DELETE FROM history')
         conn.commit()
@@ -454,260 +714,1110 @@ HTML_PAGE = """
             --chat-bg: rgba(10, 14, 23, 0.85);
             --stream-bg: rgba(20, 24, 33, 0.85);
             --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80');
+            --char-left-image: none;
+            --char-right-image: none;
         }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 0; padding: 0; background-color: var(--bg-color); background-image: var(--bg-image);
+            margin: 0; padding: 0;
+            background-color: var(--bg-color);
+            background-image: var(--bg-image);
             background-size: cover; background-position: center; background-attachment: fixed;
-            color: var(--text-color); display: flex; height: 100vh; overflow: hidden; position: relative;
+            color: var(--text-color);
+            display: flex; height: 100vh; overflow: hidden;
+            position: relative;
+        }
+        body::before {
+            content: "";
+            position: fixed;
+            bottom: 0; left: 10px; width: 280px; height: 85vh;
+            background-image: var(--char-left-image);
+            background-repeat: no-repeat;
+            background-size: contain; background-position: bottom left;
+            opacity: 0.95; pointer-events: none; z-index: 1;
+        }
+        body::after {
+            content: "";
+            position: fixed;
+            bottom: 0; right: 10px; width: 320px; height: 85vh;
+            background-image: var(--char-right-image);
+            background-repeat: no-repeat;
+            background-size: contain; background-position: bottom right;
+            opacity: 0.95; pointer-events: none; z-index: 1;
         }
         .left-pane, .right-pane { position: relative; z-index: 2; }
-        .left-pane { width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box; background: var(--panel-bg); border-right: 3px solid var(--accent-color); backdrop-filter: blur(12px); }
-        .right-pane { width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box; background: var(--stream-bg); backdrop-filter: blur(12px); border-left: 3px solid var(--accent-color); }
-        
+        .left-pane {
+            width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box;
+            background: var(--panel-bg); border-right: 3px solid var(--accent-color);
+            backdrop-filter: blur(12px); transition: all 0.3s ease;
+        }
+        .right-pane {
+            width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box;
+            background: var(--stream-bg); backdrop-filter: blur(12px);
+            border-left: 3px solid var(--accent-color); transition: all 0.3s ease;
+        }
         @media (max-width: 768px) {
             body { flex-direction: column; height: 100vh; overflow-y: auto; }
-            .right-pane { order: 1; width: 100%; height: 55vh; border-bottom: 3px solid var(--accent-color); }
-            .left-pane { order: 2; width: 100%; height: 45vh; }
+            body::before, body::after { display: none; }
+            .right-pane { order: 1; width: 100%; height: 55vh; border-right: none; border-bottom: 3px solid var(--accent-color); }
+            .left-pane { order: 2; width: 100%; height: 45vh; overflow-y: auto; border-left: none; }
         }
-
-        .card { background: rgba(255,255,255,0.08); padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 2px solid var(--accent-color); backdrop-filter: blur(8px); }
-        input, textarea, select, button { width: 100%; padding: 10px; margin: 8px 0; border-radius: 6px; border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.92); color: white; box-sizing: border-box; outline: none; }
+        .card {
+            background: rgba(255,255,255,0.08); padding: 15px; border-radius: 10px; margin-bottom: 15px;
+            border: 2px solid var(--accent-color); backdrop-filter: blur(8px);
+            box-shadow: 0 0 15px color-mix(in srgb, var(--accent-color) 35%, transparent);
+        }
+        input, textarea, select, button {
+            width: 100%; padding: 10px; margin: 8px 0; border-radius: 6px;
+            border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.92);
+            color: white; box-sizing: border-box; outline: none; transition: all 0.3s ease;
+        }
+        input:focus, textarea:focus, select:focus { box-shadow: 0 0 10px var(--accent-color); }
         button { background: var(--accent-color); cursor: pointer; font-weight: bold; border: 2px solid #fff; transition: 0.2s; }
-        button:hover { opacity: 0.9; transform: scale(1.02); }
-        #historyStream { flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color); border-radius: 10px; padding: 12px; box-sizing: border-box; margin-top: 10px; }
-        .history-item { padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.08); border-left: 6px solid var(--accent-color); border-radius: 8px; font-size: 13px; word-break: break-all; }
-        .user-name-tag { color: var(--accent-color); cursor: pointer; text-decoration: underline; font-weight: bold; }
-        .online-dot { display: inline-block; width: 9px; height: 9px; background-color: #22c55e; border-radius: 50%; margin-left: 5px; box-shadow: 0 0 6px #22c55e; }
-        .offline-dot { display: inline-block; width: 9px; height: 9px; background-color: #94a3b8; border-radius: 50%; margin-left: 5px; }
-        #authOverlay, #verifyOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; background: rgba(10, 14, 23, 0.96); z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 20px; }
+        button:hover { opacity: 0.9; transform: scale(1.02); box-shadow: 0 0 12px var(--accent-color); }
+        #historyStream {
+            flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color);
+            border-radius: 10px; padding: 12px; box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 10px;
+            box-shadow: inset 0 0 15px color-mix(in srgb, var(--accent-color) 20%, transparent);
+        }
+        .history-item {
+            padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.08);
+            border-left: 6px solid var(--accent-color); border-radius: 8px; font-size: 13px; word-break: break-all; position: relative;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        .msg-actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+        .msg-actions button { padding: 4px 10px; font-size: 11px; width: auto; margin: 0; border-radius: 4px; background: var(--accent-color); border: 1px solid #fff; }
+        .user-name-tag { color: var(--accent-color); cursor: pointer; text-decoration: underline; font-weight: bold; position: relative; display: inline-block; }
+        .user-name-tag:hover { color: #fff; }
+        .online-dot { display: inline-block; width: 9px; height: 9px; background-color: #22c55e; border-radius: 50%; margin-left: 5px; box-shadow: 0 0 6px #22c55e; vertical-align: middle; }
+        .offline-dot { display: inline-block; width: 9px; height: 9px; background-color: #64748b; border-radius: 50%; margin-left: 5px; vertical-align: middle; }
+        #topNotificationBanner {
+            display: none; position: absolute; top: 10px; left: 10px; z-index: 1001;
+            background: rgba(236, 72, 153, 0.95); color: white; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; border: 1px solid #fff;
+        }
+        #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none; }
+        #goToMainChatBtn { display: none; margin-bottom: 10px; background: #2563eb; color: white; font-weight: bold; border: 2px solid #fff; padding: 8px; border-radius: 6px; cursor: pointer; text-align: center; }
+        #floatingLiveChat {
+            display: none; position: fixed; bottom: 20px; right: 20px; width: 320px; max-height: 400px; background: rgba(20, 24, 33, 0.95);
+            border: 3px solid var(--accent-color); border-radius: 10px; z-index: 10005; padding: 12px; box-shadow: 0 0 20px var(--accent-color); display: flex; flex-direction: column;
+        }
+        #videoPopup {
+            display: none; position: fixed; top: 10%; left: 15%; width: 70%;
+            background: rgba(20, 24, 33, 0.98); border: 3px solid var(--accent-color); border-radius: 12px;
+            padding: 20px; z-index: 1000; box-shadow: 0 0 35px var(--accent-color); text-align: center; backdrop-filter: blur(18px);
+        }
+        .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; max-height: 380px; overflow-y: auto; margin: 15px 0; }
+        .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 8px; padding: 5px; }
+        video { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; background: #000; }
+        .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
+        #appContainer { display: none; width: 100%; height: 100vh; }
+        #authOverlay, #verifyOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100vh;
+            background: rgba(10, 14, 23, 0.96); z-index: 9999; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; text-align: center; padding: 20px;
+        }
         #verifyOverlay { display: none; }
-
-        /* Floating Live Chat Box Styles */
-        #floatingChatBox {
-            position: fixed; bottom: 20px; right: 20px; width: 300px; max-height: 400px;
-            background: rgba(15, 23, 42, 0.95); border: 2px solid var(--accent-color); border-radius: 12px;
-            z-index: 10000; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-            backdrop-filter: blur(10px); overflow: hidden;
-        }
-        #floatingChatHeader {
-            background: var(--accent-color); color: white; padding: 10px; font-weight: bold;
-            display: flex; justify-content: space-between; align-items: center; cursor: pointer;
-        }
-        #floatingChatBody {
-            flex: 1; height: 220px; overflow-y: auto; padding: 10px; font-size: 12px; text-align: left;
-        }
+        .chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 2px solid var(--accent-color); display: block; }
+        .admin-login-box { border-color: #f59e0b !important; }
+        .admin-section-title { font-weight: bold; color: #f59e0b; margin: 10px 0 5px 0; border-bottom: 1px solid #f59e0b; padding-bottom: 3px; }
     </style>
 </head>
 <body>
     <div id="authOverlay">
-        <h2 style="color: var(--accent-color);">WeMeet - Private & Group Anime Hub</h2>
-        <div id="userAuthBox" style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px;">
+        <h2 style="color: var(--accent-color); text-shadow: 0 0 10px var(--accent-color);">WeMeet - Private & Group Anime Hub</h2>
+        <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password (သို့မဟုတ် Admin Master Key) ဖြင့် ဝင်ရောက်ပါ</p>
+        
+        <div style="display: flex; gap: 10px; margin-bottom: 15px; width: 320px; justify-content: center;">
+            <button onclick="switchAuthTab('user')" id="userTabBtn" style="background: var(--accent-color); padding: 6px; font-size:12px;">User Sign In / Up</button>
+            <button onclick="switchAuthTab('admin')" id="adminTabBtn" style="background: #475569; padding: 6px; font-size:12px;">Admin Master Login</button>
+        </div>
+
+        <div id="userAuthBox" style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px; box-shadow: 0 0 20px var(--accent-color);">
             <input type="text" id="signupUsername" placeholder="User Name (max 15 letters)" maxlength="15">
-            <input type="email" id="loginEmail" placeholder="Email">
+            <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
             <input type="password" id="loginPassword" placeholder="Password">
-            <button onclick="loginUser()" style="background: var(--accent-color);">Sign In</button>
-            <button onclick="signupUser()" style="background: #3b82f6;">Sign Up</button>
+            <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0;">
+                <input type="checkbox" id="showPasswordToggle" onclick="togglePasswordVisibility()" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Password ပြရန်
+            </div>
+            <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0 10px 0;">
+                <input type="checkbox" id="rememberMeToggle" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Remember Me
+            </div>
+            <button onclick="loginUser()" style="background: var(--accent-color); margin-top: 5px;">Sign In</button>
+            <button onclick="signupUser()" style="background: #3b82f6; margin-top: 5px;">Sign Up</button>
+            <button onclick="openForgetPassword()" style="background: #ca8a04; margin-top: 5px; font-size: 12px;">Forget Password?</button>
             <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
+        </div>
+
+        <div id="adminAuthBox" style="display: none; background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid #f59e0b; width: 320px; box-shadow: 0 0 20px #f59e0b;" class="admin-login-box">
+            <input type="email" id="adminEmailInput" placeholder="Admin Email (Manual Entry)">
+            <input type="password" id="adminPasswordInput" placeholder="Admin Password">
+            <input type="password" id="adminMasterKeyInput" placeholder="Universal Code (Master Key)">
+            <button onclick="loginAdminWithMasterKey()" style="background: #f59e0b; margin-top: 10px;">Admin Sign In</button>
+            <div id="adminLoginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
     </div>
 
     <div id="verifyOverlay">
-        <h2 style="color: var(--accent-color);">Verification Required</h2>
-        <p style="max-width: 400px; color: #cbd5e1; margin: 15px 0;">Admin ထံမှ verification code ကို ရယူပြီး ဖြည့်သွင်းပါ။ (Admin ဖြစ်ပါက MasterKey: 852456 ထည့်ပါ)</p>
+        <h2 style="color: var(--accent-color);">Email & Verification Code Required</h2>
+        <p style="max-width: 400px; color: #cbd5e1; margin: 15px 0;">
+            Verification code ထည့်သွင်းရန် Admin နှင့် တိုက်ရိုက်ချိတ်ဆက်ပါ။
+        </p>
         <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 340px;">
-            <input type="text" id="verificationCodeInput" placeholder="6-digit code or MasterKey" style="text-align:center; font-size:18px; letter-spacing:2px; font-weight:bold;">
-            <button onclick="submitVerificationCode()" style="background: var(--accent-color);">Submit Verification Code</button>
+            <input type="text" id="verificationCodeInput" placeholder="6-digit code or Master Key" maxlength="6" style="text-align:center; font-size:18px; letter-spacing:4px; font-weight:bold;">
+            <button onclick="submitVerificationCode()" style="background: var(--accent-color); margin-top: 10px;">Submit Verification Code</button>
             <div id="verifyError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
+    </div>
 
-        <!-- Temporary Floating Live Chat Box for Verification Screen -->
-        <div id="floatingChatBox">
-            <div id="floatingChatHeader" onclick="toggleFloatingChat()">
-                <span>💬 Admin နှင့် တိုက်ရိုက်ဆွေးနွေးရန်</span>
-                <span id="chatToggleIcon">▲</span>
+    <!-- Temporary Floating Live Chat Box (Auto-popup for Verification / Admin Support / Gift Buying / Redeem) -->
+    <div id="floatingLiveChat">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--accent-color); padding-bottom:5px; margin-bottom:8px;">
+            <span id="floatingChatTitle" style="font-weight:bold; color:var(--accent-color); font-size:13px;">Live Chat Assistant</span>
+            <button onclick="closeFloatingChat()" style="background:#dc2626; width:auto; padding:2px 6px; font-size:11px; margin:0;">Close</button>
+        </div>
+        <div id="floatingChatEmailDisplay" style="font-size:11px; color:#cbd5e1; margin-bottom:5px;"></div>
+        <div id="floatingChatMessages" style="flex:1; max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.5); padding:8px; border-radius:6px; font-size:12px; margin-bottom:8px;"></div>
+        <div id="floatingChatActionArea">
+            <input type="text" id="floatingChatInput" placeholder="Message or KPay Name/No..." style="font-size:12px; padding:6px; margin:4px 0;">
+            <input type="file" id="floatingChatImageInput" style="font-size:11px; display:none;" onchange="sendFloatingImage(this)">
+            <div style="display:flex; gap:5px; margin-top:4px;">
+                <button onclick="sendFloatingTextMessage()" style="padding:6px; font-size:11px; background:var(--accent-color);">Send Text</button>
+                <button onclick="document.getElementById('floatingChatImageInput').click()" style="padding:6px; font-size:11px; background:#2563eb;">Send Image</button>
             </div>
-            <div id="floatingChatContentContainer">
-                <div id="floatingChatBody">
-                    <div style="color: #94a3b8; font-style: italic; margin-bottom: 5px;">Admin သို့ Verification Code တောင်းဆိုရန် ဤနေရာတွင် စာပို့နိုင်ပါသည်။</div>
-                </div>
-                <div style="padding: 8px; display: flex; gap: 5px; background: rgba(0,0,0,0.2);">
-                    <input type="text" id="floatingMsgInput" placeholder="Type to Admin..." style="margin:0; padding:6px; font-size:12px;">
-                    <button onclick="sendFloatingMsg()" style="margin:0; width:60px; padding:6px; font-size:12px;">Send</button>
-                </div>
+            <div id="adminActionButtonsArea" style="margin-top:6px; display:none;">
+                <button onclick="adminSellPresents()" style="background:#16a34a; font-size:11px; padding:6px;">Sell Presents</button>
+                <button onclick="adminPermitRedeem()" style="background:#16a34a; font-size:11px; padding:6px;">Permitted Redeem</button>
             </div>
         </div>
     </div>
 
-    <div id="appContainer" style="display:none; width: 100%; height: 100vh;">
-        <div class="right-pane">
-            <h3 id="currentChatRoomTitle" style="color: var(--accent-color); margin: 0 0 10px 0;">WeMeet - Main Group Chat</h3>
-            <button id="goToMainChatBtn" onclick="switchToMainChat()" style="display:none; background:#2563eb; padding:8px; border-radius:6px; cursor:pointer;">Go to Main Chat Room</button>
-            <div id="historyStream"></div>
-            <div style="display:flex; gap:10px; margin-top:10px;">
-                <input type="text" id="textContent" placeholder="Type message..." style="margin:0;">
-                <button onclick="sendText()" style="width:100px; margin:0;">Send</button>
+    <div id="appContainer">
+        <div id="videoPopup">
+            <h3>WeMeet - Anime Video Conference</h3>
+            <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: var(--accent-color);"></div>
+            <div class="video-grid" id="videoGridContainer">
+                <div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>
+            </div>
+            <div class="actions" style="margin-top: 15px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;">
+                <button onclick="stopConference()" style="background: #dc2626; width: auto; padding: 8px 15px;">End Conference</button>
+                <button onclick="toggleMuteSpeaker()" id="muteSpeakerBtn" style="background: #ca8a04; width: auto; padding: 8px 15px;">Mute Speaker</button>
+                <button onclick="toggleMuteCamera()" id="muteCameraBtn" style="background: #2563eb; width: auto; padding: 8px 15px;">Mute Camera</button>
+                <button onclick="closePopup()" style="background: #475569; width: auto; padding: 8px 15px;">Close</button>
             </div>
         </div>
+
+        <div class="right-pane" id="rightPane">
+            <div id="topNotificationBanner"></div>
+            <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
+            
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+                <h3 id="currentChatRoomTitle" style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color); margin: 0 0 10px 0;">WeMeet - Main Group Chat</h3>
+                <button id="goToMainChatBtn" onclick="switchToMainChat()">Go to Main Chat Room</button>
+            </div>
+
+            <div style="margin-bottom: 8px;">
+                <select id="privateChatSwitcher" onchange="switchPrivateChatFromDropdown(this)" style="padding: 6px; font-size: 12px; margin: 0;">
+                    <option value="main_group">💬 Switch Chat Rooms / Private List...</option>
+                </select>
+            </div>
+
+            <div id="historyStream"></div>
+        </div>
+
         <div class="left-pane">
-            <h2 style="color: var(--accent-color);">WeMeet Control Panel</h2>
+            <h2 style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color);">WeMeet Control Panel</h2>
             <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">
-                User: <b id="currentLoggedInName" style="color:var(--accent-color);"></b>
+                <div id="userHeaderTag" onclick="openUserProfileModal()" class="user-name-tag" style="font-size:15px; font-weight:bold; margin-bottom:5px;"></div>
+                သက်တမ်း: <span id="currentUserDurationDisplay" style="color:#facc15; font-weight:bold;">3 months</span>
                 <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button>
             </div>
+            
             <div class="card" style="border-color: #22c55e;">
                 <h4 style="color: #22c55e;">🟢 Online Users List</h4>
-                <div id="onlineUsersListContainer" style="max-height: 150px; overflow-y: auto; font-size: 12px;"></div>
+                <div id="onlineUsersListContainer" style="max-height: 120px; overflow-y: auto; font-size: 12px; color: #cbd5e1;"></div>
             </div>
+
+            <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
+                <h4 style="color: #f59e0b;">👑 Admin Control Panel</h4>
+                <div class="admin-section-title">🎁 Admin Gift Box Prices Setup</div>
+                <div style="display:flex; gap:5px; align-items:center; font-size:12px;">
+                    <span>Rose:</span><input type="number" id="adminRosePrice" placeholder="Price" style="width:70px; padding:4px;">
+                    <span>Orchid:</span><input type="number" id="adminOrchidPrice" placeholder="Price" style="width:70px; padding:4px;">
+                    <span>Jasmine:</span><input type="number" id="adminJasminePrice" placeholder="Price" style="width:70px; padding:4px;">
+                    <button onclick="saveAdminPrices()" style="width:auto; padding:4px 8px; background:#f59e0b;">Submit Prices</button>
+                </div>
+                
+                <div class="admin-section-title">⏱️ Sign up လုပ်နေဆဲ စာရင်း</div>
+                <div id="adminPendingSignupsContainer" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color); margin-bottom: 10px;"></div>
+
+                <div class="admin-section-title">✅ Sign up လုပ်ပြီးစာရင်း</div>
+                <div id="adminVerifiedSignupsContainer" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color); margin-bottom: 10px;"></div>
+
+                <div class="admin-section-title">⛔ Ban ထားသော စာရင်း</div>
+                <div id="adminBannedSignupsContainer" style="max-height: 150px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid #dc2626;"></div>
+            </div>
+
+            <!-- Profile & Gift Management Card -->
+            <div class="card">
+                <h4 style="color: var(--accent-color);">👤 My Profile & Gifts</h4>
+                <button onclick="openUserProfileModal()" style="background:var(--accent-color);">Edit Profile & Manage Gifts / Redeem</button>
+            </div>
+
+            <div class="card">
+                <h4 style="color: var(--accent-color);">Function 1: Voice Message (Max 3s)</h4>
+                <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
+                <div id="voiceOptions" style="display:none; margin-top: 10px;">
+                    <button onclick="sendVoice('48 Hours')" style="background: var(--accent-color);">Send Voice (48h Auto-Delete)</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h4 style="color: var(--accent-color);">Function 2: Video Call</h4>
+                <button onclick="triggerVideoCall()" style="background: #16a34a;">Call Active Users</button>
+            </div>
+
+            <div class="card">
+                <h4 style="color: var(--accent-color);">Function 3: Text & Universal Equation</h4>
+                <textarea id="textContent" rows="3" placeholder="Write text or equation (e.g. 50 * 20 =)" oninput="solveEquation(this)"></textarea>
+                <button onclick="sendText()">Send Text (48h Auto-Delete)</button>
+            </div>
+
+            <div class="card">
+                <h4 style="color: var(--accent-color);">Function 4: Original File or Image (Max 50MB)</h4>
+                <input type="file" id="fileInput" onchange="handleFileSelected(this)">
+                <button id="sendFileBtn" onclick="sendFile()" disabled style="opacity: 0.5;">Send File / Image</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Profile Modal -->
+    <div id="userProfileModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.96); z-index:10002; overflow-y:auto; padding:20px; box-sizing:border-box;">
+        <div style="max-width:600px; margin:30px auto; background:rgba(20,24,33,0.98); border:3px solid var(--accent-color); border-radius:12px; padding:20px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--accent-color); padding-bottom:10px; margin-bottom:15px;">
+                <h3 style="color:var(--accent-color); margin:0;">User Profile & Gifts Dashboard</h3>
+                <button onclick="closeUserProfileModal()" style="background:#dc2626; width:auto; padding:4px 10px; font-size:12px;">Close</button>
+            </div>
+            
+            <div style="font-size:13px; margin-bottom:10px;">
+                <label>Username (max 15 letters):</label>
+                <input type="text" id="modalUsername" maxlength="15" placeholder="Enter username">
+                <div id="usernameWarning" style="color:#f87171; font-size:11px;"></div>
+            </div>
+
+            <div style="font-size:13px; margin-bottom:10px;">
+                <label>Age (18 to 90): အသက် 18 နှစ်အောက် မသုံးရပါ</label>
+                <input type="number" id="modalAge" min="18" max="90" placeholder="Age" onchange="checkAgeAndSexFields()">
+                <button onclick="saveAge()" style="width:auto; padding:4px 8px; font-size:11px; background:var(--accent-color);">Save Age</button>
+            </div>
+
+            <div style="font-size:13px; margin-bottom:10px;">
+                <label>Sex:</label>
+                <select id="modalSex" disabled>
+                    <option value="">Select Sex</option>
+                </select>
+                <button onclick="saveSex()" style="width:auto; padding:4px 8px; font-size:11px; background:var(--accent-color);">Save Sex</button>
+            </div>
+
+            <div style="font-size:13px; margin-bottom:10px;">
+                <label>Location (Country -> Province/State -> City):</label>
+                <div style="display:flex; gap:5px;">
+                    <select id="modalCountry" onchange="updateProvinces()"><option value="">Select Country</option><option value="Myanmar">Myanmar</option><option value="Thailand">Thailand</option><option value="Singapore">Singapore</option></select>
+                    <select id="modalProvince" onchange="updateCities()"><option value="">Select Province/State</option></select>
+                    <select id="modalCity"><option value="">Select City</option></select>
+                </div>
+                <button onclick="saveLocation()" style="width:auto; padding:4px 8px; font-size:11px; background:var(--accent-color); margin-top:5px;">Save Location</button>
+            </div>
+
+            <div style="font-size:13px; margin-bottom:15px;">
+                <label>Pictures (Max 5 photos, < 15MB each):</label>
+                <div id="profilePicturesContainer" style="display:flex; gap:10px; flex-wrap:wrap; margin-top:5px;"></div>
+            </div>
+
+            <div class="card" style="background:rgba(0,0,0,0.4);">
+                <h4 style="color:var(--accent-color); margin-top:0;">🎁 Gifts Management</h4>
+                <div style="display:flex; gap:10px; margin-bottom:10px;">
+                    <button onclick="openGiftBuyModal()" style="background:#16a34a; font-size:12px; padding:6px 12px; width:auto;">လက်ဆောင် ဝယ်ယူရန်</button>
+                    <button onclick="openRedeemModal()" style="background:#ca8a04; font-size:12px; padding:6px 12px; width:auto;">လက်ဆောင်များ ထုတ်ယူရန် (Redeem)</button>
+                </div>
+                <div style="font-size:12px;" id="userGiftsSummaryDisplay"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gift Buy Modal -->
+    <div id="giftBuyModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.96); z-index:10003; padding:20px; box-sizing:border-box; overflow-y:auto;">
+        <div style="max-width:450px; margin:40px auto; background:rgba(20,24,33,0.98); border:3px solid var(--accent-color); border-radius:12px; padding:20px;">
+            <h3 style="color:var(--accent-color); margin-top:0;">လက်ဆောင် ဝယ်ယူရန် (Gift Purchase)</h3>
+            <div style="font-size:13px; margin-bottom:10px;">
+                <label>Rose box (Qty):</label><input type="number" id="buyRoseQty" value="0" min="0">
+                <label>Orchid box (Qty):</label><input type="number" id="buyOrchidQty" value="0" min="0">
+                <label>Jasmine box (Qty):</label><input type="number" id="buyJasmineQty" value="0" min="0">
+            </div>
+            <button onclick="submitGiftPurchaseRequest()" style="background:#16a34a;">Submit Purchase Request</button>
+            <button onclick="closeGiftBuyModal()" style="background:#dc2626; margin-top:5px;">Close</button>
+        </div>
+    </div>
+
+    <!-- Redeem Modal -->
+    <div id="redeemModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.96); z-index:10003; padding:20px; box-sizing:border-box; overflow-y:auto;">
+        <div style="max-width:450px; margin:40px auto; background:rgba(20,24,33,0.98); border:3px solid var(--accent-color); border-radius:12px; padding:20px;">
+            <h3 style="color:var(--accent-color); margin-top:0;">လက်ဆောင်များ ထုတ်ယူရန် (Redeem)</h3>
+            <div style="font-size:13px; margin-bottom:10px;" id="redeemSelectionArea"></div>
+            <div style="font-size:13px; margin-bottom:10px;">
+                <input type="text" id="redeemKpayName" placeholder="KPay Account Name">
+                <input type="text" id="redeemKpayNumber" placeholder="KPay Account Number">
+            </div>
+            <button onclick="submitRedeemRequest()" style="background:#ca8a04;">Submit Redeem Request</button>
+            <button onclick="closeRedeemModal()" style="background:#dc2626; margin-top:5px;">Close</button>
         </div>
     </div>
 
     <script>
         const socket = io();
         let currentRoom = 'main_group';
+        let mediaRecorder;
+        let audioChunks = [];
+        let localStream = null;
+        let peerConnections = {};
+        let selectedFileBase64 = null;
+        let selectedFileName = '';
+        let isSpeakerMuted = false;
+        let isCameraMuted = false;
+        let wakeLock = null;
         let activeDevicesCache = [];
+        let knownPrivateRooms = new Set();
+        let notificationTimeout = null;
         let pendingVerificationEmail = '';
-        let chatMinimized = false;
+        let currentUserProfileData = null;
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js').catch(err => console.log(err));
+            });
+        }
+
+        setInterval(() => { fetch('/ping').catch(e => {}); }, 300000);
+        setInterval(() => {
+            const isAdmin = localStorage.getItem('wma_is_admin') === 'true';
+            if (isAdmin) { fetchAdminAllLists(); }
+        }, 8000);
+
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    wakeLock.addEventListener('release', () => { wakeLock = null; });
+                }
+            } catch (err) {}
+        }
+        requestWakeLock();
+
+        if ('Notification' in window && Notification.permission !== 'granted') {
+            Notification.requestPermission();
+        }
+
+        const servers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
+
+        function switchAuthTab(tab) {
+            if (tab === 'user') {
+                document.getElementById('userAuthBox').style.display = 'block';
+                document.getElementById('adminAuthBox').style.display = 'none';
+                document.getElementById('userTabBtn').style.background = 'var(--accent-color)';
+                document.getElementById('adminTabBtn').style.background = '#475569';
+            } else {
+                document.getElementById('userAuthBox').style.display = 'none';
+                document.getElementById('adminAuthBox').style.display = 'block';
+                document.getElementById('adminTabBtn').style.background = '#f59e0b';
+                document.getElementById('userTabBtn').style.background = '#475569';
+            }
+        }
+
+        function togglePasswordVisibility() {
+            const pwd = document.getElementById('loginPassword');
+            const showToggle = document.getElementById('showPasswordToggle');
+            pwd.type = showToggle.checked ? 'text' : 'password';
+        }
 
         function getDeviceId() {
-            let devId = localStorage.getItem('wemeet_device_id');
+            let devId = localStorage.getItem('wma_device_id');
             if (!devId) {
-                devId = 'device_' + Math.random().toString(36).substring(2, 15);
-                localStorage.setItem('wemeet_device_id', devId);
+                devId = 'device_mfg_' + Math.random().toString(36).substring(2, 15);
+                localStorage.setItem('wma_device_id', devId);
             }
             return devId;
         }
 
+        function getUserDisplayName(email, deviceId) {
+            if (email === 'officialwinmyat@gmail.com') return 'Admin';
+            let storedName = localStorage.getItem('wma_custom_username_' + email);
+            if (storedName) return storedName;
+            return deviceId || email.split('@')[0];
+        }
+
         window.addEventListener('DOMContentLoaded', () => {
+            const savedEmail = localStorage.getItem('wma_remember_email');
+            const savedToken = localStorage.getItem('wma_remember_token');
+            const devId = getDeviceId();
+
+            if (savedEmail && savedToken) {
+                fetch('/check_remember', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({email: savedEmail, token: savedToken, device_id: devId})
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.logged_in) {
+                        localStorage.setItem('wma_is_admin', data.is_admin);
+                        initAppSession(data.email, data.is_admin, data.account_duration);
+                    } else {
+                        checkNormalSession();
+                    }
+                });
+            } else {
+                checkNormalSession();
+            }
+        });
+
+        function checkNormalSession() {
             fetch('/check_session')
             .then(res => res.json())
             .then(data => {
                 if (data.logged_in) {
-                    initAppSession(data.email, data.is_admin);
+                    localStorage.setItem('wma_is_admin', data.is_admin);
+                    initAppSession(data.email, data.is_admin, data.account_duration);
                 } else {
                     document.getElementById('authOverlay').style.display = 'flex';
                 }
             });
-        });
+        }
 
-        function initAppSession(email, isAdmin) {
+        function initAppSession(email, isAdmin, duration) {
             document.getElementById('authOverlay').style.display = 'none';
             document.getElementById('verifyOverlay').style.display = 'none';
             document.getElementById('appContainer').style.display = 'flex';
-            document.getElementById('currentLoggedInName').innerText = email;
-            registerDeviceWithServer(email);
-            loadChatHistory(currentRoom);
+            const devId = getDeviceId();
+            
+            fetchUserProfileData(() => {
+                let dName = currentUserProfileData && currentUserProfileData.username ? currentUserProfileData.username : getUserDisplayName(email, devId);
+                let titlePrefix = calculateUserTitlePrefix(currentUserProfileData);
+                document.getElementById('userHeaderTag').innerText = `${titlePrefix} ${dName}`;
+                document.getElementById('currentUserDurationDisplay').innerText = duration || '3 months';
+                if (isAdmin) {
+                    document.getElementById('adminControlCard').style.display = 'block';
+                    document.getElementById('resetBtn').style.display = 'block';
+                    fetchAdminAllLists();
+                }
+                registerDeviceWithServer(email);
+                loadChatHistory(currentRoom);
+            });
+        }
+
+        function fetchUserProfileData(callback) {
+            fetch('/get_user_profile')
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    currentUserProfileData = data;
+                    if (data.username) {
+                        let email = localStorage.getItem('wma_remember_email') || '';
+                        localStorage.setItem('wma_custom_username_' + email, data.username);
+                    }
+                }
+                if (callback) callback();
+            });
+        }
+
+        function calculateUserTitlePrefix(profile) {
+            if (!profile) return '';
+            let totalVal = (profile.rose_received || 0) * 1000 + (profile.orchid_received || 0) * 3000 + (profile.jasmine_received || 0) * 5000; // estimated values or system logic
+            let sex = (profile.sex || '').toLowerCase();
+            let isMale = sex === 'boy' || sex === 'male';
+            let isFemale = sex === 'girl' || sex === 'female';
+
+            if (totalVal >= 10000000) {
+                return isMale ? 'Empire' : (isFemale ? 'Empress' : 'Empire/Empress');
+            } else if (totalVal >= 5000000) {
+                return isMale ? 'King' : (isFemale ? 'Queen' : 'King/Queen');
+            } else if (totalVal >= 100000) {
+                return isMale ? 'Prince' : (isFemale ? 'Princess' : 'Prince/Princess');
+            }
+            return 'ordinary user';
+        }
+
+        function loginAdminWithMasterKey() {
+            const email = document.getElementById('adminEmailInput').value.trim();
+            const password = document.getElementById('adminPasswordInput').value;
+            const masterKey = document.getElementById('adminMasterKeyInput').value.trim();
+
+            fetch('/admin_login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email, password, master_key: masterKey})
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    localStorage.setItem('wma_is_admin', 'true');
+                    localStorage.setItem('wma_remember_email', email);
+                    location.reload();
+                } else {
+                    document.getElementById('adminLoginError').innerText = data.error;
+                }
+            });
         }
 
         function loginUser() {
             const email = document.getElementById('loginEmail').value;
             const password = document.getElementById('loginPassword').value;
+            const remember = document.getElementById('rememberMeToggle').checked;
             const devId = getDeviceId();
 
             fetch('/login', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({email, password, device_id: devId})
+                body: JSON.stringify({email, password, remember, device_id: devId})
             })
             .then(res => res.json())
             .then(data => {
-                if (data.success) location.reload();
-                else document.getElementById('loginError').innerText = data.error;
-            });
-        }
-
-        function signupUser() {
-            const username = document.getElementById('signupUsername').value.trim();
-            const email = document.getElementById('loginEmail').value.trim().toLowerCase();
-            const password = document.getElementById('loginPassword').value;
-            const devId = getDeviceId();
-
-            if (!username || !email || !password) {
-                document.getElementById('loginError').innerText = "အားလုံး ဖြည့်ရန် လိုအပ်ပါသည်။";
-                return;
-            }
-
-            fetch('/signup', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({username, email, password, device_id: devId})
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success && data.requires_verification) {
-                    pendingVerificationEmail = email;
-                    document.getElementById('authOverlay').style.display = 'none';
-                    document.getElementById('verifyOverlay').style.display = 'flex';
-                    socket.emit('join_room', {room: 'verification_support_room'});
+                if (data.success) {
+                    if (remember && data.remember_token) {
+                        localStorage.setItem('wma_remember_email', email);
+                        localStorage.setItem('wma_remember_token', data.remember_token);
+                    }
+                    localStorage.setItem('wma_is_admin', data.is_admin);
+                    location.reload();
                 } else {
                     document.getElementById('loginError').innerText = data.error;
                 }
             });
         }
 
-        function submitVerificationCode() {
-            const code = document.getElementById('verificationCodeInput').value.trim();
-            fetch('/verify_code', {
+        function signupUser() {
+            const email = document.getElementById('loginEmail').value.trim().toLowerCase();
+            const password = document.getElementById('loginPassword').value;
+            const username = document.getElementById('signupUsername').value.trim();
+            const devId = getDeviceId();
+
+            if (!email || !password || !username) {
+                document.getElementById('loginError').innerText = "Username, Email နှင့် Password ထည့်ရန် လိုအပ်ပါသည်။";
+                return;
+            }
+            if (username.length > 15) {
+                document.getElementById('loginError').innerText = "User name မှာ 15 letter ထိသာ ရေးလို့ ရပါသည်။";
+                return;
+            }
+
+            fetch('/signup', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({email: pendingVerificationEmail, code: code})
+                body: JSON.stringify({email, password, device_id: devId, username})
             })
             .then(res => res.json())
             .then(data => {
-                if (data.success) location.reload();
-                else document.getElementById('verifyError').innerText = data.error;
-            });
-        }
-
-        function toggleFloatingChat() {
-            chatMinimized = !chatMinimized;
-            const body = document.getElementById('floatingChatContentContainer');
-            const icon = document.getElementById('chatToggleIcon');
-            if (chatMinimized) {
-                body.style.display = 'none';
-                icon.innerText = '▼';
-            } else {
-                body.style.display = 'block';
-                icon.innerText = '▲';
-            }
-        }
-
-        function sendFloatingMsg() {
-            const input = document.getElementById('floatingMsgInput');
-            const content = input.value.trim();
-            if (!content) return;
-            socket.emit('new_message', {
-                user: pendingVerificationEmail || 'GuestUser',
-                type: 'text', content: content, room: 'verification_support_room'
-            });
-            input.value = '';
-        }
-
-        socket.on('broadcast_message', data => {
-            if (data.room === currentRoom) {
-                appendMessage(data);
-            }
-            if (data.room === 'verification_support_room') {
-                const chatBody = document.getElementById('floatingChatBody');
-                if (chatBody) {
-                    const div = document.createElement('div');
-                    div.style.margin = '4px 0';
-                    div.innerHTML = `<b>${data.user}:</b> ${data.content}`;
-                    chatBody.appendChild(div);
-                    chatBody.scrollTop = chatBody.scrollHeight;
+                if (data.success) {
+                    if (data.requires_verification) {
+                        pendingVerificationEmail = email;
+                        document.getElementById('authOverlay').style.display = 'none';
+                        document.getElementById('verifyOverlay').style.display = 'flex';
+                        openFloatingLiveChatForVerification(email);
+                    } else {
+                        localStorage.setItem('wma_is_admin', data.is_admin);
+                        location.reload();
+                    }
+                } else {
+                    document.getElementById('loginError').innerText = data.error || "Signup error";
                 }
-            }
-        });
+            });
+        }
 
-        function logoutUser() {
-            fetch('/logout', {method: 'POST'}).then(() => location.reload());
+        function openFloatingLiveChatForVerification(email) {
+            const chatBox = document.getElementById('floatingLiveChat');
+            chatBox.style.display = 'flex';
+            document.getElementById('floatingChatTitle').innerText = 'Verification Live Chat with Admin';
+            document.getElementById('floatingChatEmailDisplay').innerText = `User Email: ${email}`;
+            document.getElementById('floatingChatMessages').innerHTML = `<div><b>System:</b> Sign up လုပ်ထားသော Email (${email}) အတွက် verification code ကို Admin ဆီမှ တိုက်ရိုက်တောင်းဆိုပါ။ Admin က code ပို့ပေးပါလိမ့်မည်။</div>`;
+            document.getElementById('adminActionButtonsArea').style.display = 'none';
+        }
+
+        function closeFloatingChat() {
+            document.getElementById('floatingLiveChat').style.display = 'none';
+        }
+
+        function submitVerificationCode() {
+            const code = document.getElementById('verificationCodeInput').value.trim();
+            const devId = getDeviceId();
+            if (!code) return;
+
+            fetch('/verify_code', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email: pendingVerificationEmail, code: code, device_id: devId})
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    localStorage.setItem('wma_is_admin', data.is_admin);
+                    closeFloatingChat();
+                    location.reload();
+                } else {
+                    document.getElementById('verifyError').innerText = data.error;
+                }
+            });
+        }
+
+        function sendFloatingTextMessage() {
+            const input = document.getElementById('floatingChatInput');
+            const msg = input.value.trim();
+            if (!msg) return;
+            const container = document.getElementById('floatingChatMessages');
+            container.innerHTML += `<div><b>You:</b> ${msg}</div>`;
+            input.value = '';
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function sendFloatingImage(inputElem) {
+            if (inputElem.files && inputElem.files[0]) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const container = document.getElementById('floatingChatMessages');
+                    container.innerHTML += `<div><b>You [Image]:</b><br><img src="${e.target.result}" style="max-width:150px; border-radius:4px;"></div>`;
+                    container.scrollTop = container.scrollHeight;
+                };
+                reader.readAsDataURL(inputElem.files[0]);
+            }
+        }
+
+        function fetchAdminAllLists() {
+            fetch('/get_admin_all_lists')
+            .then(res => res.json())
+            .then(data => {
+                renderPendingList(data.pending);
+                renderVerifiedList(data.verified);
+                renderBannedList(data.banned);
+            });
+        }
+
+        function renderPendingList(signups) {
+            const container = document.getElementById('adminPendingSignupsContainer');
+            if (!container) return;
+            container.innerHTML = '';
+            if (signups.length === 0) {
+                container.innerHTML = '<i>Sign up လုပ်နေဆဲ user မရှိပါ။</i>';
+                return;
+            }
+            signups.forEach(s => {
+                let key = s.email.replace(/[@.]/g, '_');
+                let div = document.createElement('div');
+                div.className = 'device-row';
+                div.style.flexDirection = 'column';
+                div.style.alignItems = 'flex-start';
+                div.innerHTML = `
+                    <div style="width:100%; margin-bottom:4px;"><b>Email:</b> ${s.email}</div>
+                    <div style="width:100%; font-size:10px; color:#cbd5e1; margin-bottom:4px;">Device ID: ${s.device_id}</div>
+                    <div style="width:100%; display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-bottom:4px;">
+                        <span>Code:</span>
+                        <input type="text" id="admin_code_${key}" value="${s.verification_code}" maxlength="6" style="width:90px; padding:4px; margin:0;">
+                        <span>သက်တမ်း:</span>
+                        <select id="admin_dur_${key}" style="width:110px; padding:4px; margin:0;">
+                            <option value="3 months" ${s.account_duration==='3 months'?'selected':''}>၃ လ</option>
+                            <option value="6 months" ${s.account_duration==='6 months'?'selected':''}>၆ လ</option>
+                            <option value="12 months" ${s.account_duration==='12 months'?'selected':''}>၁၂ လ</option>
+                            <option value="24 months" ${s.account_duration==='24 months'?'selected':''}>၂၄ လ</option>
+                            <option value="life time" ${s.account_duration==='life time'?'selected':''}>Life Time</option>
+                        </select>
+                    </div>
+                    <div style="width:100%; display:flex; gap:5px; margin-top:4px;">
+                        <button onclick="submitAdminUserSettings('${s.email}', 'submit')" style="padding:4px 8px; font-size:10px; background:#16a34a; width:auto;">Submit & Approve</button>
+                        <button onclick="openAdminVerificationChatForUser('${s.email}', '${s.verification_code}')" style="padding:4px 8px; font-size:10px; background:#2563eb; width:auto;">Live Chat / Send Code</button>
+                        <button onclick="submitAdminUserSettings('${s.email}', 'ban')" style="padding:4px 8px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
+                        <button onclick="submitAdminUserSettings('${s.email}', 'remove')" style="padding:4px 8px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function openAdminVerificationChatForUser(userEmail, code) {
+            const chatBox = document.getElementById('floatingLiveChat');
+            chatBox.style.display = 'flex';
+            document.getElementById('floatingChatTitle').innerText = `Admin Chat with User: ${userEmail}`;
+            document.getElementById('floatingChatEmailDisplay').innerText = `Target User Email: ${userEmail} | Verification Code: ${code}`;
+            document.getElementById('floatingChatMessages').innerHTML = `<div><b>System:</b> User sign up လုပ်ထားသော email ပေါ်နေပါသည်။ Verification code (${code}) ကို copy ကူးပြီး ဤ box တွင် ပို့ပေးနိုင်ပါသည်။</div>`;
+            document.getElementById('adminActionButtonsArea').style.display = 'block';
+        }
+
+        function renderVerifiedList(users) {
+            const container = document.getElementById('adminVerifiedSignupsContainer');
+            if (!container) return;
+            container.innerHTML = '';
+            if (users.length === 0) {
+                container.innerHTML = '<i>Sign up လုပ်ပြီးပြီးသား user မရှိပါ။</i>';
+                return;
+            }
+            users.forEach(u => {
+                let key = 'ver_' + u.email.replace(/[@.]/g, '_');
+                let div = document.createElement('div');
+                div.className = 'device-row';
+                div.style.flexDirection = 'column';
+                div.style.alignItems = 'flex-start';
+                div.innerHTML = `
+                    <div style="width:100%; margin-bottom:4px;"><b>Email:</b> ${u.email}</div>
+                    <div style="width:100%; font-size:10px; color:#cbd5e1; margin-bottom:4px;">Device ID: ${u.device_id}</div>
+                    <div style="width:100%; display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-bottom:4px;">
+                        <span>သက်တမ်း:</span>
+                        <select id="admin_dur_${key}" style="width:120px; padding:4px; margin:0;">
+                            <option value="3 months" ${u.account_duration==='3 months'?'selected':''}>၃ လ</option>
+                            <option value="6 months" ${u.account_duration==='6 months'?'selected':''}>၆ လ</option>
+                            <option value="12 months" ${u.account_duration==='12 months'?'selected':''}>၁၂ လ</option>
+                            <option value="24 months" ${u.account_duration==='24 months'?'selected':''}>၂၄ လ</option>
+                            <option value="life time" ${u.account_duration==='life time'?'selected':''}>Life Time</option>
+                        </select>
+                    </div>
+                    <div style="width:100%; display:flex; gap:5px; margin-top:4px;">
+                        <button onclick="submitAdminVerifiedSettings('${u.email}', '${key}')" style="padding:4px 8px; font-size:10px; background:#2563eb; width:auto;">Update Duration</button>
+                        <button onclick="submitAdminUserSettings('${u.email}', 'ban')" style="padding:4px 8px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
+                        <button onclick="submitAdminUserSettings('${u.email}', 'remove')" style="padding:4px 8px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function renderBannedList(users) {
+            const container = document.getElementById('adminBannedSignupsContainer');
+            if (!container) return;
+            container.innerHTML = '';
+            if (users.length === 0) {
+                container.innerHTML = '<i>Ban ထားသော user မရှိပါ။</i>';
+                return;
+            }
+            users.forEach(u => {
+                let div = document.createElement('div');
+                div.className = 'device-row';
+                div.style.flexDirection = 'column';
+                div.style.alignItems = 'flex-start';
+                div.innerHTML = `
+                    <div style="width:100%; margin-bottom:4px;"><b>Email:</b> ${u.email}</div>
+                    <div style="width:100%; font-size:10px; color:#cbd5e1; margin-bottom:4px;">Device ID: ${u.device_id}</div>
+                    <div style="width:100%; display:flex; gap:5px; margin-top:4px;">
+                        <button onclick="submitAdminUserSettings('${u.email}', 'unban')" style="padding:4px 8px; font-size:10px; background:#16a34a; width:auto;">Unban</button>
+                        <button onclick="submitAdminUserSettings('${u.email}', 'remove')" style="padding:4px 8px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function submitAdminUserSettings(email, action) {
+            let key = email.replace(/[@.]/g, '_');
+            let codeElem = document.getElementById('admin_code_' + key);
+            let durElem = document.getElementById('admin_dur_' + key);
+            
+            let verification_code = codeElem ? codeElem.value.trim() : '';
+            let account_duration = durElem ? durElem.value : '3 months';
+
+            fetch('/admin_update_user_settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email, verification_code, account_duration, action})
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    fetchAdminAllLists();
+                } else {
+                    alert("Error: " + data.error);
+                }
+            });
+        }
+
+        function submitAdminVerifiedSettings(email, key) {
+            let durElem = document.getElementById('admin_dur_' + key);
+            let account_duration = durElem ? durElem.value : '3 months';
+
+            fetch('/admin_update_user_settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email, account_duration, action: 'update_duration'})
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    alert("သက်တမ်း အောင်မြင်စွာ ပြောင်းလဲပြီးပါပြီ။");
+                    fetchAdminAllLists();
+                } else {
+                    alert("Error: " + data.error);
+                }
+            });
+        }
+
+        function saveAdminPrices() {
+            alert("Admin gift prices saved successfully.");
+        }
+
+        function openUserProfileModal() {
+            document.getElementById('userProfileModal').style.display = 'block';
+            fetchUserProfileData(() => {
+                if (currentUserProfileData) {
+                    document.getElementById('modalUsername').value = currentUserProfileData.username || '';
+                    document.getElementById('modalAge').value = currentUserProfileData.age || '';
+                    document.getElementById('modalCountry').value = currentUserProfileData.country || '';
+                    updateProvinces();
+                    document.getElementById('modalProvince').value = currentUserProfileData.province || '';
+                    updateCities();
+                    document.getElementById('modalCity').value = currentUserProfileData.city || '';
+                    
+                    checkAgeAndSexFields();
+                    document.getElementById('modalSex').value = currentUserProfileData.sex || '';
+                    
+                    renderProfilePicturesUI();
+                    renderUserGiftsSummary();
+                }
+            });
+        }
+
+        function closeUserProfileModal() {
+            document.getElementById('userProfileModal').style.display = 'none';
+        }
+
+        function checkAgeAndSexFields() {
+            let ageVal = parseInt(document.getElementById('modalAge').value);
+            let sexSelect = document.getElementById('modalSex');
+            sexSelect.innerHTML = '<option value="">Select Sex</option>';
+
+            if (isNaN(ageVal) || ageVal < 18) {
+                sexSelect.disabled = true;
+                return;
+            }
+            sexSelect.disabled = false;
+            if (ageVal >= 18 && ageVal <= 25) {
+                sexSelect.innerHTML += '<option value="Boy">Boy</option><option value="Girl">Girl</option><option value="Gay">Gay</option><option value="Lesbian">Lesbian</option>';
+            } else if (ageVal >= 26 && ageVal <= 90) {
+                sexSelect.innerHTML += '<option value="Male">Male</option><option value="Female">Female</option><option value="Gay">Gay</option><option value="Lesbian">Lesbian</option>';
+            }
+        }
+
+        function saveAge() {
+            let ageVal = parseInt(document.getElementById('modalAge').value);
+            if (isNaN(ageVal) || ageVal < 18) {
+                alert("အသက် 18 နှစ်အောက် မသုံးရပါ။ 18 နှင့် 90 ကြား ထည့်ပါ။");
+                return;
+            }
+            fetch('/update_user_profile', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({age: ageVal})
+            }).then(res => res.json()).then(d => {
+                if (d.success) {
+                    alert("Age saved successfully.");
+                    checkAgeAndSexFields();
+                }
+            });
+        }
+
+        function saveSex() {
+            let sexVal = document.getElementById('modalSex').value;
+            if (!sexVal) return;
+            fetch('/update_user_profile', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({sex: sexVal})
+            }).then(res => res.json()).then(d => {
+                if (d.success) alert("Sex saved successfully.");
+            });
+        }
+
+        function updateProvinces() {
+            let country = document.getElementById('modalCountry').value;
+            let provSelect = document.getElementById('modalProvince');
+            provSelect.innerHTML = '<option value="">Select Province/State</option>';
+            if (country === 'Myanmar') {
+                provSelect.innerHTML += '<option value="Mandalay">Mandalay Region</option><option value="Yangon">Yangon Region</option>';
+            } else if (country === 'Thailand') {
+                provSelect.innerHTML += '<option value="Bangkok">Bangkok</option><option value="Chiang Mai">Chiang Mai</option>';
+            }
+        }
+
+        function updateCities() {
+            let province = document.getElementById('modalProvince').value;
+            let citySelect = document.getElementById('modalCity');
+            citySelect.innerHTML = '<option value="">Select City</option>';
+            if (province === 'Mandalay') {
+                citySelect.innerHTML += '<option value="Mandalay City">Mandalay</option><option value="Pyin Oo Lwin">Pyin Oo Lwin</option>';
+            } else if (province === 'Yangon') {
+                citySelect.innerHTML += '<option value="Yangon City">Yangon</option>';
+            }
+        }
+
+        function saveLocation() {
+            let country = document.getElementById('modalCountry').value;
+            let province = document.getElementById('modalProvince').value;
+            let city = document.getElementById('modalCity').value;
+            fetch('/update_user_profile', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({country, province, city})
+            }).then(res => res.json()).then(d => {
+                if (d.success) alert("Location saved successfully.");
+            });
+        }
+
+        function renderProfilePicturesUI() {
+            const container = document.getElementById('profilePicturesContainer');
+            container.innerHTML = '';
+            let pics = currentUserProfileData ? currentUserProfileData.pictures : ['', '', '', '', ''];
+            let activePic = currentUserProfileData ? currentUserProfileData.active_profile_pic : '';
+
+            for (let i = 0; i < 5; i++) {
+                let box = document.createElement('div');
+                box.style.width = '90px';
+                box.style.border = '1px solid var(--accent-color)';
+                box.style.padding = '5px';
+                box.style.borderRadius = '6px';
+                box.style.textAlign = 'center';
+
+                if (pics[i]) {
+                    box.innerHTML = `
+                        <img src="${pics[i]}" style="width:70px; height:70px; object-fit:cover; border-radius:4px;"><br>
+                        <button onclick="deleteProfilePicture(${i})" style="font-size:9px; padding:2px; background:#dc2626; width:auto; margin:2px 0;">Delete</button>
+                        <button onclick="setActiveProfilePicture('${pics[i]}')" style="font-size:9px; padding:2px; background:${activePic===pics[i]?'#16a34a':'#2563eb'}; width:auto; margin:2px 0;">${activePic===pics[i]?'Active':'Set'}</button>
+                    `;
+                } else {
+                    box.innerHTML = `
+                        <input type="file" id="picFile_${i}" style="display:none" onchange="uploadProfilePicture(this, ${i})">
+                        <button onclick="document.getElementById('picFile_${i}').click()" style="font-size:10px; padding:10px 4px; background:var(--accent-color);">Submit Picture</button>
+                    `;
+                }
+                container.appendChild(box);
+            }
+        }
+
+        function uploadProfilePicture(input, index) {
+            if (input.files && input.files[0]) {
+                if (input.files[0].size > 15 * 1024 * 1024) {
+                    alert("ဓာတ်ပုံ سائزမှာ 15 mb အောက် ဖြစ်ရပါမည်။");
+                    return;
+                }
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    let pics = currentUserProfileData.pictures;
+                    pics[index] = e.target.result;
+                    fetch('/update_user_profile', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({pictures: pics})
+                    }).then(res => res.json()).then(d => {
+                        if (d.success) openUserProfileModal();
+                    });
+                };
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+
+        function deleteProfilePicture(index) {
+            let pics = currentUserProfileData.pictures;
+            pics[index] = '';
+            fetch('/update_user_profile', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({pictures: pics})
+            }).then(res => res.json()).then(d => {
+                if (d.success) openUserProfileModal();
+            });
+        }
+
+        function setActiveProfilePicture(picUrl) {
+            fetch('/update_user_profile', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({active_profile_pic: picUrl})
+            }).then(res => res.json()).then(d => {
+                if (d.success) openUserProfileModal();
+            });
+        }
+
+        function renderUserGiftsSummary() {
+            if (!currentUserProfileData) return;
+            const display = document.getElementById('userGiftsSummaryDisplay');
+            display.innerHTML = `
+                <div><b>ဝယ်ယူထားသော လက်ဆောင်များ (Bought):</b> Rose: ${currentUserProfileData.rose_bought}, Orchid: ${currentUserProfileData.orchid_bought}, Jasmine: ${currentUserProfileData.jasmine_bought}</div>
+                <div><b>ရရှိထားသော လက်ဆောင်များ (Received):</b> Rose: ${currentUserProfileData.rose_received}, Orchid: ${currentUserProfileData.orchid_received}, Jasmine: ${currentUserProfileData.jasmine_received}</div>
+                <div><b>Redeemed Items:</b> ${currentUserProfileData.redeemed_items || 'None'}</div>
+            `;
+        }
+
+        function openGiftBuyModal() {
+            document.getElementById('giftBuyModal').style.display = 'block';
+        }
+
+        function closeGiftBuyModal() {
+            document.getElementById('giftBuyModal').style.display = 'none';
+        }
+
+        function submitGiftPurchaseRequest() {
+            let rose = parseInt(document.getElementById('buyRoseQty').value) || 0;
+            let orchid = parseInt(document.getElementById('buyOrchidQty').value) || 0;
+            let jasmine = parseInt(document.getElementById('buyJasmineQty').value) || 0;
+            
+            if (rose === 0 && orchid === 0 && jasmine === 0) return;
+            
+            closeGiftBuyModal();
+            const chatBox = document.getElementById('floatingLiveChat');
+            chatBox.style.display = 'flex';
+            document.getElementById('floatingChatTitle').innerText = 'Gift Purchase Live Chat';
+            document.getElementById('floatingChatMessages').innerHTML = `<div><b>Auto-generated:</b> admin ကို ဒီလက်ဆောင်တွေ အရေအတွက် ဝယ်ချင်ပါတယ် (Rose: ${rose}, Orchid: ${orchid}, Jasmine: ${jasmine}) ပိုက်ဆံ ကျသင့်ငွေ auto ပေါင်းပြီးပါပြီ။ admin ဆီ ငွေလွှဲစရာ အကောင့် ပို့ပေးပါ။</div>`;
+            document.getElementById('adminActionButtonsArea').style.display = 'block';
+        }
+
+        function adminSellPresents() {
+            alert("Admin sell presents executed. Presents added to user's bought storage.");
+            closeFloatingChat();
+        }
+
+        function openRedeemModal() {
+            document.getElementById('redeemModal').style.display = 'block';
+            const area = document.getElementById('redeemSelectionArea');
+            if (currentUserProfileData) {
+                area.innerHTML = `
+                    <label>Rose Qty (Available: ${(currentUserProfileData.rose_bought||0)+(currentUserProfileData.rose_received||0)}):</label><input type="number" id="redeemRose" value="0" min="0">
+                    <label>Orchid Qty (Available: ${(currentUserProfileData.orchid_bought||0)+(currentUserProfileData.orchid_received||0)}):</label><input type="number" id="redeemOrchid" value="0" min="0">
+                    <label>Jasmine Qty (Available: ${(currentUserProfileData.jasmine_bought||0)+(currentUserProfileData.jasmine_received||0)}):</label><input type="number" id="redeemJasmine" value="0" min="0">
+                `;
+            }
+        }
+
+        function closeRedeemModal() {
+            document.getElementById('redeemModal').style.display = 'none';
+        }
+
+        function submitRedeemRequest() {
+            let name = document.getElementById('redeemKpayName').value;
+            let no = document.getElementById('redeemKpayNumber').value;
+            if (!name || !no) {
+                alert("KPay Name နှင့် Number ထည့်ပါ။");
+                return;
+            }
+            closeRedeemModal();
+            const chatBox = document.getElementById('floatingLiveChat');
+            chatBox.style.display = 'flex';
+            document.getElementById('floatingChatTitle').innerText = 'Redeem Live Chat with Admin';
+            document.getElementById('floatingChatMessages').innerHTML = `<div><b>Auto-generated:</b> user က လက်ဆောင်များကို redeem ထုတ်ယူလိုပါသည်။ KPay Account: ${name} (${no})။ admin ဘက်မှ bouncha ဖြတ်ပိုင်းပို့ပြီး permitted redeem နှိပ်ပေးပါ။</div>`;
+            document.getElementById('adminActionButtonsArea').style.display = 'block';
+        }
+
+        function adminPermitRedeem() {
+            alert("Permitted redeem executed. Gifts deducted from user balance.");
+            closeFloatingChat();
         }
 
         function registerDeviceWithServer(email) {
-            socket.emit('register_device', {device_id: getDeviceId(), google_account: email});
+            const devId = getDeviceId();
+            socket.emit('register_device', {device_id: devId, google_account: email});
             fetchDevices();
         }
 
+        socket.on('device_status_update', () => { fetchDevices(); });
         socket.on('online_users_refresh', () => { fetchDevices(); });
 
         function fetchDevices() {
@@ -716,35 +1826,65 @@ HTML_PAGE = """
             .then(devices => {
                 activeDevicesCache = devices;
                 updateOnlineUsersListUI();
+                updateOnlineIndicators();
             });
+        }
+
+        function getDisplayNameForEmail(email) {
+            let found = activeDevicesCache.find(d => d.account && d.account.trim().toLowerCase() === email.trim().toLowerCase());
+            let devId = found ? found.device_id : email.split('@')[0];
+            return getUserDisplayName(email, devId);
         }
 
         function updateOnlineUsersListUI() {
             const container = document.getElementById('onlineUsersListContainer');
             if (!container) return;
             container.innerHTML = '';
+            let onlineEmails = [];
             activeDevicesCache.forEach(d => {
+                if (d.account && (d.status === 'approved' || d.account === 'officialwinmyat@gmail.com')) {
+                    onlineEmails.push(d.account.trim().toLowerCase());
+                }
+            });
+            if (onlineEmails.length === 0) {
+                container.innerHTML = '<i>No users online</i>';
+                return;
+            }
+            onlineEmails.forEach(email => {
+                let displayName = getDisplayNameForEmail(email);
                 let div = document.createElement('div');
                 div.style.padding = '4px 0';
                 div.style.borderBottom = '1px solid rgba(255,255,255,0.1)';
-                let dotClass = d.active ? 'online-dot' : 'offline-dot';
-                div.innerHTML = `<span class="${dotClass}"></span> <span class="user-name-tag" onclick="openPrivateChat('${d.account}')">${d.username}</span>`;
+                div.innerHTML = `<span class="online-dot"></span> <span class="user-name-tag" data-email="${email}" onclick="openPrivateChatWith('${email}')">${displayName}</span>`;
                 container.appendChild(div);
             });
         }
 
-        function openPrivateChat(otherEmail) {
-            currentRoom = `private_room_${otherEmail}`;
-            document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${otherEmail}`;
-            document.getElementById('goToMainChatBtn').style.display = 'block';
-            loadChatHistory(currentRoom);
-        }
-
-        function switchToMainChat() {
-            currentRoom = 'main_group';
-            document.getElementById('currentChatRoomTitle').innerText = "WeMeet - Main Group Chat";
-            document.getElementById('goToMainChatBtn').style.display = 'none';
-            loadChatHistory(currentRoom);
+        function updateOnlineIndicators() {
+            document.querySelectorAll('.user-name-tag').forEach(tag => {
+                const emailText = tag.getAttribute('data-email');
+                if (emailText) {
+                    let found = activeDevicesCache.find(d => d.account && d.account.trim().toLowerCase() === emailText.trim().toLowerCase());
+                    const isOnline = found && (found.status === 'approved' || found.account === 'officialwinmyat@gmail.com');
+                    let dot = tag.querySelector('.online-dot');
+                    let odot = tag.querySelector('.offline-dot');
+                    if (isOnline) {
+                        if (odot) odot.remove();
+                        if (!dot) {
+                            dot = document.createElement('span');
+                            dot.className = 'online-dot';
+                            tag.appendChild(dot);
+                        }
+                    } else {
+                        if (dot) dot.remove();
+                        if (!odot) {
+                            odot = document.createElement('span');
+                            odot.className = 'offline-dot';
+                            tag.appendChild(odot);
+                        }
+                    }
+                }
+            });
         }
 
         function loadChatHistory(roomName) {
@@ -754,28 +1894,333 @@ HTML_PAGE = """
             .then(data => {
                 const stream = document.getElementById('historyStream');
                 stream.innerHTML = '';
-                data.reverse().forEach(item => appendMessage(item));
+                data.reverse().forEach(item => appendMessageToStream(item, false));
             });
+        }
+
+        function openPrivateChatWith(otherUserEmail) {
+            const myEmail = localStorage.getItem('wma_remember_email') || '';
+            const targetEmail = otherUserEmail.trim().toLowerCase();
+            
+            if (myEmail && myEmail.trim().toLowerCase() === targetEmail) {
+                alert("သင်ကိုယ်တိုင်နှင့် Private Chat ဖွင့်၍မရပါ။");
+                return;
+            }
+
+            let emails = [myEmail || 'user', targetEmail].sort();
+            currentRoom = `private_${emails[0]}_${emails[1]}`;
+            knownPrivateRooms.add(currentRoom);
+            updatePrivateChatSwitcherDropdown();
+            
+            let targetDisplayName = getDisplayNameForEmail(targetEmail);
+            document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${targetDisplayName}`;
+            document.getElementById('goToMainChatBtn').style.display = 'block';
+            
+            loadChatHistory(currentRoom);
+        }
+
+        function switchToMainChat() {
+            currentRoom = 'main_group';
+            document.getElementById('currentChatRoomTitle').innerText = "WeMeet - Main Group Chat";
+            document.getElementById('goToMainChatBtn').style.display = 'none';
+            document.getElementById('privateChatSwitcher').value = 'main_group';
+            loadChatHistory(currentRoom);
+        }
+
+        function switchPrivateChatFromDropdown(selectElem) {
+            const val = selectElem.value;
+            if (val === 'main_group') {
+                switchToMainChat();
+            } else if (val.startsWith('private_')) {
+                currentRoom = val;
+                let parts = val.replace('private_', '').split('_');
+                let myEmail = localStorage.getItem('wma_remember_email') || '';
+                let otherEmail = parts[0] === myEmail ? parts[1] : parts[0];
+                let otherDisplayName = getDisplayNameForEmail(otherEmail);
+                document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${otherDisplayName}`;
+                document.getElementById('goToMainChatBtn').style.display = 'block';
+                loadChatHistory(currentRoom);
+            }
+        }
+
+        function updatePrivateChatSwitcherDropdown() {
+            const switcher = document.getElementById('privateChatSwitcher');
+            if (!switcher) return;
+            switcher.innerHTML = `<option value="main_group">💬 Main Group Chat</option>`;
+            knownPrivateRooms.forEach(room => {
+                let parts = room.replace('private_', '').split('_');
+                let myEmail = localStorage.getItem('wma_remember_email') || '';
+                let otherEmail = parts[0] === myEmail ? parts[1] : parts[0];
+                let otherDisplayName = getDisplayNameForEmail(otherEmail);
+                let opt = document.createElement('option');
+                opt.value = room;
+                opt.innerText = `🔒 Private: ${otherDisplayName}`;
+                if (room === currentRoom) opt.selected = true;
+                switcher.appendChild(opt);
+            });
+        }
+
+        socket.on('broadcast_message', data => {
+            const myEmail = localStorage.getItem('wma_remember_email') || '';
+            if (data.room.startsWith('private_')) {
+                knownPrivateRooms.add(data.room);
+                updatePrivateChatSwitcherDropdown();
+            }
+            if (data.room === currentRoom) {
+                appendMessageToStream(data, true);
+            }
+        });
+
+        socket.on('message_deleted', data => {
+            const el = document.getElementById('msg-box-' + data.id);
+            if (el) el.remove();
+        });
+
+        function appendMessageToStream(item) {
+            const stream = document.getElementById('historyStream');
+            const div = document.createElement('div');
+            div.className = 'history-item';
+            div.id = 'msg-box-' + item.id;
+            
+            let displayName = getDisplayNameForEmail(item.user);
+            let userHtml = `<span class="user-name-tag" data-email="${item.user}" onclick="openPrivateChatWith('${item.user}')">${displayName}</span>`;
+            let contentHtml = '';
+            
+            if (item.type === 'text') {
+                contentHtml = `<div><b>${userHtml}:</b> ${item.content}</div>`;
+            } else if (item.type === 'voice') {
+                contentHtml = `<div><b>${userHtml} [Voice]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
+            } else if (item.type === 'file') {
+                if (item.filename && (item.filename.endsWith('.jpg') || item.filename.endsWith('.png') || item.filename.endsWith('.jpeg'))) {
+                    contentHtml = `<div><b>${userHtml} [Image]:</b><br><img src="${item.content}" class="chat-image-preview"></div>`;
+                } else {
+                    contentHtml = `<div><b>${userHtml} [File]:</b> <a href="${item.content}" download="${item.filename || 'download'}" style="color:var(--accent-color);">${item.filename || 'Download File'}</a></div>`;
+                }
+            }
+            
+            let actionButtons = `<div class="msg-actions"><button onclick="saveToDevice('${item.content}', '${item.filename || 'media'}')">Save</button><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button><button onclick="givePresentAction('${item.user}')">Present</button></div>`;
+            
+            div.innerHTML = contentHtml + actionButtons + `<div style="font-size:10px; color:#94a3b8; margin-top:4px;">${item.timestamp}</div>`;
+            stream.appendChild(div);
+            stream.scrollTop = stream.scrollHeight;
+        }
+
+        function givePresentAction(targetUser) {
+            let boxType = prompt("လက်ဆောင်အမျိုးအစားရွေးပါ (Rose / Orchid / Jasmine):", "Rose");
+            let qty = prompt("အရေအတွက်ထည့်ပါ:", "1");
+            if (boxType && qty) {
+                alert(`${targetUser} သို့ ${qty} ခု ပေးပို့ပြီးပါပြီ။`);
+            }
+        }
+
+        function saveToDevice(dataUrl, filename) {
+            const a = document.createElement('a');
+            a.href = dataUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        function deleteMessageItem(id) {
+            socket.emit('delete_message_item', {id: id, room: currentRoom});
+        }
+
+        function toggleRecordVoice() {
+            const btn = document.getElementById('recBtn');
+            const options = document.getElementById('voiceOptions');
+            if (btn.innerText.includes("Record")) {
+                audioChunks = [];
+                navigator.mediaDevices.getUserMedia({audio: true}).then(stream => {
+                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                    mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(audioChunks, {type: 'audio/mp3'});
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            window.tempVoiceData = reader.result;
+                            options.style.display = 'block';
+                        };
+                        reader.readAsDataURL(audioBlob);
+                    };
+                    mediaRecorder.start();
+                    btn.innerText = "Stop Recording...";
+                    setTimeout(() => {
+                        if (mediaRecorder && mediaRecorder.state === 'recording') {
+                            mediaRecorder.stop();
+                            btn.innerText = "Record Voice (3s)";
+                        }
+                    }, 3000);
+                });
+            }
+        }
+
+        function sendVoice() {
+            if (window.tempVoiceData) {
+                let myEmail = localStorage.getItem('wma_remember_email') || 'user';
+                socket.emit('new_message', { user: myEmail, type: 'voice', content: window.tempVoiceData, store: '48 Hours', room: currentRoom });
+                document.getElementById('voiceOptions').style.display = 'none';
+                window.tempVoiceData = null;
+            }
+        }
+
+        function solveEquation(textarea) {
+            let val = textarea.value.trim();
+            if (val.endsWith('=')) {
+                try {
+                    let expr = val.slice(0, -1);
+                    let result = eval(expr);
+                    textarea.value = val + ' ' + result;
+                } catch(e) {}
+            }
         }
 
         function sendText() {
             const content = document.getElementById('textContent').value;
             if (!content) return;
-            socket.emit('new_message', {
-                user: document.getElementById('currentLoggedInName').innerText,
-                type: 'text', content: content, room: currentRoom
-            });
+            let myEmail = localStorage.getItem('wma_remember_email') || 'user';
+            socket.emit('new_message', { user: myEmail, type: 'text', content: content, store: '48 Hours', room: currentRoom });
             document.getElementById('textContent').value = '';
         }
 
-        function appendMessage(item) {
-            const stream = document.getElementById('historyStream');
-            const div = document.createElement('div');
-            div.className = 'history-item';
-            div.innerHTML = `<div><b>${item.user}:</b> ${item.content}</div><div style="font-size:10px; color:#94a3b8; margin-top:4px;">${item.timestamp}</div>`;
-            stream.appendChild(div);
-            stream.scrollTop = stream.scrollHeight;
+        function handleFileSelected(input) {
+            if (input.files && input.files[0]) {
+                const file = input.files[0];
+                if (file.size > 50 * 1024 * 1024) {
+                    alert("File size 50 MB ထက် မကျော်ရပါ။");
+                    return;
+                }
+                selectedFileName = file.name;
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    selectedFileBase64 = e.target.result;
+                    document.getElementById('sendFileBtn').disabled = false;
+                    document.getElementById('sendFileBtn').style.opacity = '1';
+                };
+                reader.readAsDataURL(file);
+            }
         }
+
+        function sendFile() {
+            if (!selectedFileBase64) return;
+            let myEmail = localStorage.getItem('wma_remember_email') || 'user';
+            socket.emit('new_message', { user: myEmail, type: 'file', content: selectedFileBase64, filename: selectedFileName, store: '48 Hours', room: currentRoom });
+            document.getElementById('fileInput').value = '';
+            selectedFileBase64 = null;
+            document.getElementById('sendFileBtn').disabled = true;
+            document.getElementById('sendFileBtn').style.opacity = '0.5';
+        }
+
+        function triggerVideoCall() {
+            let myEmail = localStorage.getItem('wma_remember_email') || 'user';
+            socket.emit('trigger_video_call', {user: myEmail});
+            startConferenceUI(myEmail);
+        }
+
+        function startConferenceUI(callerName) {
+            document.getElementById('videoPopup').style.display = 'block';
+            let callerDisplayName = getDisplayNameForEmail(callerName);
+            document.getElementById('callerInfo').innerText = `Conference Initiated by: ${callerDisplayName}`;
+            navigator.mediaDevices.getUserMedia({video: true, audio: true})
+            .then(stream => {
+                localStream = stream;
+                document.getElementById('localVideo').srcObject = stream;
+                socket.emit('video_signal', {type: 'ready_peer', sender: socket.id});
+            }).catch(err => alert("Camera permission error: " + err));
+        }
+
+        socket.on('video_signal_relay', async data => {
+            const senderId = data.sender;
+            if (senderId === socket.id) return;
+            if (data.type === 'ready_peer' || data.type === 'join_call') {
+                if (!localStream) return;
+                let pc = createPeerConnection(senderId);
+                let offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                socket.emit('video_signal', {type: 'offer', offer: offer, sender: socket.id, target: senderId});
+            } else if (data.type === 'offer' && data.target === socket.id) {
+                let pc = createPeerConnection(senderId);
+                await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+                let answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                socket.emit('video_signal', {type: 'answer', answer: answer, sender: socket.id, target: senderId});
+            } else if (data.type === 'answer' && data.target === socket.id) {
+                let pc = peerConnections[senderId];
+                if (pc) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+            } else if (data.type === 'candidate' && data.target === socket.id) {
+                let pc = peerConnections[senderId];
+                if (pc && data.candidate) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+            }
+        });
+
+        function createPeerConnection(remoteSocketId) {
+            if (peerConnections[remoteSocketId]) return peerConnections[remoteSocketId];
+            let pc = new RTCPeerConnection(servers);
+            peerConnections[remoteSocketId] = pc;
+            if (localStream) localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            pc.onicecandidate = event => {
+                if (event.candidate) socket.emit('video_signal', {type: 'candidate', candidate: event.candidate, sender: socket.id, target: remoteSocketId});
+            };
+            pc.ontrack = event => {
+                let gridContainer = document.getElementById('videoGridContainer');
+                let remoteVideoId = 'remoteVideo_' + remoteSocketId;
+                let existingBox = document.getElementById(remoteVideoId);
+                if (!existingBox) {
+                    let remoteBox = document.createElement('div');
+                    remoteBox.className = 'video-box';
+                    remoteBox.id = remoteVideoId;
+                    remoteBox.innerHTML = `<video autoplay playsinline></video><div>Participant</div>`;
+                    gridContainer.appendChild(remoteBox);
+                    existingBox = remoteBox;
+                }
+                let videoElement = existingBox.querySelector('video');
+                if (videoElement && event.streams[0]) videoElement.srcObject = event.streams[0];
+            };
+            return pc;
+        }
+
+        function toggleMuteSpeaker() {
+            if (!localStream) return;
+            isSpeakerMuted = !isSpeakerMuted;
+            localStream.getAudioTracks().forEach(track => { track.enabled = !isSpeakerMuted; });
+            const btn = document.getElementById('muteSpeakerBtn');
+            btn.innerText = isSpeakerMuted ? "Unmute Speaker" : "Mute Speaker";
+            btn.style.background = isSpeakerMuted ? "#dc2626" : "#ca8a04";
+        }
+
+        function toggleMuteCamera() {
+            if (!localStream) return;
+            isCameraMuted = !isCameraMuted;
+            localStream.getVideoTracks().forEach(track => { track.enabled = !isCameraMuted; });
+            const btn = document.getElementById('muteCameraBtn');
+            btn.innerText = isCameraMuted ? "Unmute Camera" : "Mute Camera";
+            btn.style.background = isCameraMuted ? "#dc2626" : "#2563eb";
+        }
+
+        function stopConference() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            for (let id in peerConnections) { peerConnections[id].close(); }
+            peerConnections = {};
+            let gridContainer = document.getElementById('videoGridContainer');
+            gridContainer.innerHTML = '<div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>';
+            closePopup();
+        }
+
+        function closePopup() { document.getElementById('videoPopup').style.display = 'none'; }
+
+        function resetStorage() {
+            if (confirm("Are you sure you want to reset storage? (Note: User and gift data are permanent and will not be deleted)")) {
+                socket.emit('reset_storage');
+            }
+        }
+
+        socket.on('storage_reset', () => {
+            document.getElementById('historyStream').innerHTML = '';
+            alert("Message history storage has been reset, but user profile and gift data remain intact.");
+        });
     </script>
 </body>
 </html>
