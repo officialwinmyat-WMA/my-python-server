@@ -5,7 +5,7 @@ import requests
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template_string, session, send_file
 
-# Python compatibility fix for gevent (Completely disabled ssl patching to prevent recursion error)
+# Python compatibility fix for gevent
 import sys
 from gevent import monkey
 try:
@@ -19,7 +19,6 @@ app.secret_key = os.environ.get("SECRET_KEY", "wma_qq_secure_secret_key_123")
 from flask_socketio import SocketIO, emit
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
-# Database Initialization (Supporting both Group and Private Chats)
 def init_db():
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
@@ -55,7 +54,8 @@ def init_db():
             verification_code TEXT,
             is_verified INTEGER DEFAULT 0,
             account_duration TEXT DEFAULT '3 months',
-            signup_time DATETIME
+            signup_time DATETIME,
+            status TEXT DEFAULT 'pending'
         )
     ''')
     conn.commit()
@@ -125,18 +125,19 @@ def signup():
             conn.close()
             return jsonify({"success": False, "error": "ဤ Device အား Ban ထားပါသဖြင့် Sign up လုပ်၍ မရပါ။"})
             
-        cursor.execute('SELECT id, is_verified FROM users WHERE email = ?', (email,))
+        cursor.execute('SELECT id, is_verified, status FROM users WHERE email = ?', (email,))
         existing = cursor.fetchone()
         
         now = datetime.now()
         if existing:
-            if existing[1] == 1:
+            if existing[1] == 1 and existing[2] == 'verified':
                 conn.close()
                 return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်ရှိပြီးသား ဖြစ်ပါသည်။ Login ဝင်ပါ။"})
             else:
-                cursor.execute('UPDATE users SET password = ?, device_id = ?, signup_time = ? WHERE email = ?', (password, device_id, now, email))
+                cursor.execute('UPDATE users SET password = ?, device_id = ?, signup_time = ?, status = "pending" WHERE email = ?', (password, device_id, now, email))
         else:
-            cursor.execute('INSERT INTO users (email, password, device_id, is_verified, account_duration, signup_time) VALUES (?, ?, ?, 0, "3 months", ?)', (email, password, device_id, now))
+            default_code = "".join([str(random.randint(0, 9)) for _ in range(6)])
+            cursor.execute('INSERT INTO users (email, password, device_id, is_verified, account_duration, signup_time, verification_code, status) VALUES (?, ?, ?, 0, "3 months", ?, ?, "pending")', (email, password, device_id, now, default_code))
         
         conn.commit()
         conn.close()
@@ -165,10 +166,10 @@ def verify_code():
             signup_time = datetime.strptime(signup_time_str, '%Y-%m-%d %H:%M:%S.%f' if '.' in signup_time_str else '%Y-%m-%d %H:%M:%S')
             if datetime.now() - signup_time > timedelta(minutes=15):
                 conn.close()
-                return jsonify({"success": False, "error": "Verification သက်တမ်း ၁ မိနစ်/၁၅ မိနစ် ကျော်လွန်သွားပါပြီ။ Code ထပ်တောင်းပါ။"})
+                return jsonify({"success": False, "error": "Verification သက်တမ်း ၁၅ မိနစ် ကျော်လွန်သွားပါပြီ။ Code ထပ်တောင်းပါ။"})
         
         if assigned_code and assigned_code == code:
-            cursor.execute('UPDATE users SET is_verified = 1 WHERE email = ?', (email,))
+            cursor.execute('UPDATE users SET is_verified = 1, status = "verified" WHERE email = ?', (email,))
             conn.commit()
             conn.close()
             
@@ -197,12 +198,15 @@ def login():
         conn.close()
         return jsonify({"success": False, "error": "ဤ Device အား Ban ထားပါသည်။"})
 
-    cursor.execute('SELECT password, is_verified, device_id, account_duration FROM users WHERE email = ?', (email,))
+    cursor.execute('SELECT password, is_verified, device_id, account_duration, status FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
     
     if row:
-        stored_password, is_verified, stored_device_id, account_duration = row
-        if is_verified == 0:
+        stored_password, is_verified, stored_device_id, account_duration, user_status = row
+        if user_status == 'banned':
+            conn.close()
+            return jsonify({"success": False, "error": "ဤအကောင့်အား Ban ထားပါသည်။"})
+        if is_verified == 0 or user_status != 'verified':
             conn.close()
             return jsonify({"success": False, "error": "အကောင့်ကို Code ဖြင့် အတည်ပြုပြီးသား မရှိသေးပါ။"})
             
@@ -221,7 +225,7 @@ def login():
             return jsonify({"success": True, "is_admin": is_admin, "remember_token": token, "account_duration": account_duration})
         else:
             conn.close()
-            return jsonify({"success": False, "error": "Password သို့မဟုတ် Device ID မမှန်ကန်ပါ။"})
+            return jsonify({"success": False, "error": "Password သို့မဟုတ် Device ID မမှန်ကန်ပါ။ (Sign up လုပ်ခဲ့သည့် Device ဖြင့်သာ ဝင်ပါ။)"})
     else:
         conn.close()
         return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်မရှိပါ။"})
@@ -238,11 +242,11 @@ def check_remember():
         
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT remember_token, device_id, account_duration FROM users WHERE email = ?', (email,))
+    cursor.execute('SELECT remember_token, device_id, account_duration, status FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
     conn.close()
     
-    if row and row[0] == token and row[1] == device_id:
+    if row and row[0] == token and row[1] == device_id and row[3] != 'banned':
         session['user_email'] = email
         is_admin = (email == 'officialwinmyat@gmail.com')
         session['is_admin'] = is_admin
@@ -287,9 +291,14 @@ def check_session():
         
         conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
-        cursor.execute('SELECT account_duration FROM users WHERE email = ?', (email,))
+        cursor.execute('SELECT account_duration, status FROM users WHERE email = ?', (email,))
         row = cursor.fetchone()
         conn.close()
+        
+        if row and row[1] == 'banned':
+            session.clear()
+            return jsonify({"logged_in": False})
+            
         duration = row[0] if row else '3 months'
         
         return jsonify({
@@ -300,28 +309,59 @@ def check_session():
         })
     return jsonify({"logged_in": False})
 
-@app.route('/get_recent_signups', methods=['GET'])
-def get_recent_signups():
+@app.route('/get_admin_all_lists', methods=['GET'])
+def get_admin_all_lists():
     if session.get('user_email') != 'officialwinmyat@gmail.com':
-        return jsonify([])
+        return jsonify({"pending": [], "verified": [], "banned": []})
     
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
+    
     fifteen_mins_ago = datetime.now() - timedelta(minutes=15)
-    cursor.execute('SELECT email, device_id, verification_code, account_duration, signup_time FROM users WHERE signup_time >= ?', (fifteen_mins_ago,))
-    rows = cursor.fetchall()
+    cursor.execute('SELECT email, device_id, verification_code, account_duration, signup_time FROM users WHERE (signup_time >= ? OR is_verified = 0) AND status != "banned" ORDER BY signup_time DESC', (fifteen_mins_ago,))
+    pending_rows = cursor.fetchall()
+    
+    cursor.execute('SELECT email, device_id, account_duration, signup_time FROM users WHERE is_verified = 1 AND status = "verified" ORDER BY signup_time DESC')
+    verified_rows = cursor.fetchall()
+    
+    cursor.execute('SELECT email, device_id, account_duration, signup_time FROM users WHERE status = "banned" ORDER BY signup_time DESC')
+    banned_rows = cursor.fetchall()
+    
     conn.close()
     
-    signups = []
-    for r in rows:
-        signups.append({
+    pending_list = []
+    for r in pending_rows:
+        pending_list.append({
             "email": r[0],
             "device_id": r[1],
             "verification_code": r[2] or '',
             "account_duration": r[3] or '3 months',
             "signup_time": r[4]
         })
-    return jsonify(signups)
+        
+    verified_list = []
+    for r in verified_rows:
+        verified_list.append({
+            "email": r[0],
+            "device_id": r[1],
+            "account_duration": r[2] or '3 months',
+            "signup_time": r[3]
+        })
+        
+    banned_list = []
+    for r in banned_rows:
+        banned_list.append({
+            "email": r[0],
+            "device_id": r[1],
+            "account_duration": r[2] or '3 months',
+            "signup_time": r[3]
+        })
+        
+    return jsonify({
+        "pending": pending_list,
+        "verified": verified_list,
+        "banned": banned_list
+    })
 
 @app.route('/admin_update_user_settings', methods=['POST'])
 def admin_update_user_settings():
@@ -339,9 +379,13 @@ def admin_update_user_settings():
     
     if action == 'remove':
         cursor.execute('DELETE FROM users WHERE email = ?', (email,))
+        cursor.execute('DELETE FROM devices WHERE google_account = ?', (email,))
     elif action == 'ban':
-        cursor.execute('UPDATE users SET verification_code = NULL WHERE email = ?', (email,))
+        cursor.execute('UPDATE users SET status = "banned" WHERE email = ?', (email,))
         cursor.execute('UPDATE devices SET status = "banned" WHERE google_account = ?', (email,))
+    elif action == 'unban':
+        cursor.execute('UPDATE users SET status = "verified", is_verified = 1 WHERE email = ?', (email,))
+        cursor.execute('UPDATE devices SET status = "approved" WHERE google_account = ?', (email,))
     else:
         if code:
             cursor.execute('UPDATE users SET verification_code = ?, account_duration = ? WHERE email = ?', (code, duration, email))
@@ -529,7 +573,9 @@ HTML_PAGE = """
             --chat-bg: rgba(10, 14, 23, 0.85);
             --stream-bg: rgba(20, 24, 33, 0.85);
             --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80');
-            --char-fg-image: none;
+            --char-fg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80');
+            --char-left-image: none;
+            --char-right-image: none;
         }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -541,13 +587,26 @@ HTML_PAGE = """
             display: flex; height: 100vh; overflow: hidden;
             position: relative;
         }
+        /* CrystalDiskInfo Style Side Characters Wrapper */
         body::before {
             content: "";
             position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background-image: var(--char-fg-image);
-            background-size: cover; background-position: center;
-            opacity: 0.15;
+            bottom: 0; left: 10px; width: 280px; height: 85vh;
+            background-image: var(--char-left-image);
+            background-repeat: no-repeat;
+            background-size: contain; background-position: bottom left;
+            opacity: 0.95;
+            pointer-events: none;
+            z-index: 1;
+        }
+        body::after {
+            content: "";
+            position: fixed;
+            bottom: 0; right: 10px; width: 320px; height: 85vh;
+            background-image: var(--char-right-image);
+            background-repeat: no-repeat;
+            background-size: contain; background-position: bottom right;
+            opacity: 0.95;
             pointer-events: none;
             z-index: 1;
         }
@@ -555,6 +614,7 @@ HTML_PAGE = """
             position: relative;
             z-index: 2;
         }
+        /* Desktop Default */
         .left-pane {
             width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box;
             background: var(--panel-bg); border-right: 3px solid var(--accent-color);
@@ -567,6 +627,33 @@ HTML_PAGE = """
             border-left: 3px solid var(--accent-color);
             transition: all 0.3s ease;
         }
+        
+        /* Mobile View Adjustment */
+        @media (max-width: 768px) {
+            body {
+                flex-direction: column;
+                height: 100vh;
+                overflow-y: auto;
+            }
+            body::before, body::after {
+                display: none; /* Hide side characters on small screens to prevent layout break */
+            }
+            .right-pane {
+                order: 1;
+                width: 100%;
+                height: 55vh;
+                border-right: none;
+                border-bottom: 3px solid var(--accent-color);
+            }
+            .left-pane {
+                order: 2;
+                width: 100%;
+                height: 45vh;
+                overflow-y: auto;
+                border-left: none;
+            }
+        }
+
         .card {
             background: rgba(255,255,255,0.08); padding: 15px; border-radius: 10px; margin-bottom: 15px;
             border: 2px solid var(--accent-color); backdrop-filter: blur(8px);
@@ -644,8 +731,9 @@ HTML_PAGE = """
         .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; max-height: 380px; overflow-y: auto; margin: 15px 0; }
         .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 8px; padding: 5px; }
         video { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; background: #000; }
-        .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
+        .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
         #appContainer { display: none; width: 100%; height: 100vh; }
+        @media (max-width: 768px) { #appContainer { height: auto; flex-direction: column; } }
         #authOverlay, #verifyOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100vh;
             background: rgba(10, 14, 23, 0.96); z-index: 9999; display: flex; flex-direction: column;
@@ -654,6 +742,7 @@ HTML_PAGE = """
         #verifyOverlay { display: none; }
         .chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 2px solid var(--accent-color); display: block; }
         .admin-login-box { border-color: #f59e0b !important; }
+        .admin-section-title { font-weight: bold; color: #f59e0b; margin: 10px 0 5px 0; border-bottom: 1px solid #f59e0b; padding-bottom: 3px; }
     </style>
 </head>
 <body>
@@ -661,13 +750,11 @@ HTML_PAGE = """
         <h2 style="color: var(--accent-color); text-shadow: 0 0 10px var(--accent-color);">WMA QQ - Private & Group Anime Hub</h2>
         <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password (သို့မဟုတ် Admin Master Key) ဖြင့် ဝင်ရောက်ပါ</p>
         
-        <!-- Toggle Tabs -->
         <div style="display: flex; gap: 10px; margin-bottom: 15px; width: 320px; justify-content: center;">
             <button onclick="switchAuthTab('user')" id="userTabBtn" style="background: var(--accent-color); padding: 6px; font-size:12px;">User Sign In / Up</button>
             <button onclick="switchAuthTab('admin')" id="adminTabBtn" style="background: #475569; padding: 6px; font-size:12px;">Admin Master Login</button>
         </div>
 
-        <!-- User Form -->
         <div id="userAuthBox" style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px; box-shadow: 0 0 20px var(--accent-color);">
             <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
             <input type="password" id="loginPassword" placeholder="Password">
@@ -683,7 +770,6 @@ HTML_PAGE = """
             <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
 
-        <!-- Admin Master Key Form -->
         <div id="adminAuthBox" style="display: none; background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid #f59e0b; width: 320px; box-shadow: 0 0 20px #f59e0b;" class="admin-login-box">
             <input type="email" id="adminEmailInput" value="officialwinmyat@gmail.com" readonly style="background:#334155;">
             <input type="password" id="adminPasswordInput" placeholder="Admin Password">
@@ -696,12 +782,12 @@ HTML_PAGE = """
     <div id="verifyOverlay">
         <h2 style="color: var(--accent-color);">Email & Verification Code Required</h2>
         <p style="max-width: 400px; color: #cbd5e1; margin: 15px 0;">
-            15 မိနစ်အတွင်း officialwinmyat@gmail.com ထံ မှ varification code တောင်းယူပြီး ဖြည့်ပါ ၊ ဤ box အား မပိတ်လိုက်ပါနှင့် home key ဖြင့်သာ ပြန်ထွက်ပါ။
+            15 မိနစ်အတွင်း officialwinmyat@gmail.com ထံ မှ verification code တောင်းယူပြီး ဖြည့်ပါ (refresh မဖြစ်ဘဲ သေချာအချိန်ယူ ရိုက်ထည့်နိုင်ပါပြီ)။
         </p>
         <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 340px;">
             <input type="text" id="verificationCodeInput" placeholder="6-digit code" maxlength="6" style="text-align:center; font-size:18px; letter-spacing:4px; font-weight:bold;">
             <button onclick="submitVerificationCode()" style="background: var(--accent-color); margin-top: 10px;">Submit Verification Code</button>
-            <button onclick="requestVerificationAgain()" style="background: #ca8a04; margin-top: 5px; font-size: 12px;">Not get varification code from admin? request varification again</button>
+            <button onclick="requestVerificationAgain()" style="background: #ca8a04; margin-top: 5px; font-size: 12px;">Not get verification code? Request again</button>
             <div style="font-size: 11px; color: #facc15; margin-top: 8px; line-height: 1.4;">
                 ကျန်ရှိသော မှားယွင်းခွင့်အကြိမ်ရေ: <span id="remainingAttempts" style="font-weight:bold;">10</span> ကြိမ်
             </div>
@@ -709,7 +795,6 @@ HTML_PAGE = """
         </div>
     </div>
 
-    <!-- Human or Robot Challenge Modal -->
     <div id="robotChallengeOverlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.98); z-index:10000; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:20px;">
         <h2 style="color:#ef4444;">Human Verification Required</h2>
         <p style="color:#cbd5e1; max-width:400px;">Verification code ၁၀ ကြိမ် အမှားများသွားပါသဖြင့် Human လား Robot လား စစ်ဆေးခြင်း ခံယူပါ။</p>
@@ -767,14 +852,21 @@ HTML_PAGE = """
             </div>
 
             <div class="card">
-                <h4 style="color: var(--accent-color);">Dynamic Anime Themes</h4>
+                <h4 style="color: var(--accent-color);">Dynamic Anime Themes (CrystalDiskInfo Style)</h4>
                 <button onclick="autoGenerateAnimeTheme()">Randomize Anime Character Theme</button>
             </div>
 
             <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
-                <h4 style="color: #f59e0b;">👑 Admin Control Panel (Recent 15 Mins Signups)</h4>
-                <div style="font-size: 11px; color: #cbd5e1; margin-bottom: 8px;">လတ်တလော ၁၅ မိနစ်အတွင်း sign up နှိပ်ထားသော user များ:</div>
-                <div id="adminRecentSignupsContainer" style="max-height: 240px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
+                <h4 style="color: #f59e0b;">👑 Admin Control Panel</h4>
+                
+                <div class="admin-section-title">⏱️ Sign up လုပ်နေဆဲ စာရင်း (အပေါ်ဆုံးတွင် အသစ်ပေါ်မည်)</div>
+                <div id="adminPendingSignupsContainer" style="max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color); margin-bottom: 10px;"></div>
+
+                <div class="admin-section-title">✅ Sign up လုပ်ပြီးစာရင်း</div>
+                <div id="adminVerifiedSignupsContainer" style="max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color); margin-bottom: 10px;"></div>
+
+                <div class="admin-section-title">⛔ Ban ထားသော စာရင်း</div>
+                <div id="adminBannedSignupsContainer" style="max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid #dc2626;"></div>
             </div>
 
             <div class="card">
@@ -836,9 +928,9 @@ HTML_PAGE = """
         setInterval(() => {
             const isAdmin = localStorage.getItem('wma_is_admin') === 'true';
             if (isAdmin) {
-                fetchRecentSignupsForAdmin();
+                fetchAdminAllLists();
             }
-        }, 5000);
+        }, 8000);
 
         async function requestWakeLock() {
             try {
@@ -856,18 +948,37 @@ HTML_PAGE = """
 
         const servers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
 
+        // CrystalDiskInfo style themes with explicit Left & Right Character artworks
         const animeThemes = [
-            { name: "Naruto Uzumaki", bg: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", char: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", accent: "#f97316" },
-            { name: "Gojo Satoru", bg: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", char: "https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=1920&q=80", accent: "#3b82f6" },
-            { name: "Wei Wuxian (MDZS)", bg: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", char: "https://images.unsplash.com/photo-1563089145-599997674d42?auto=format&fit=crop&w=1920&q=80", accent: "#a855f7" },
-            { name: "Nezuko Kamado", bg: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", char: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" }
+            { 
+                name: "Aoi Edition", 
+                bg: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", 
+                charLeft: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80", 
+                charRight: "https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=800&q=80", 
+                accent: "#3b82f6" 
+            },
+            { 
+                name: "Shizuku Edition", 
+                bg: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", 
+                charLeft: "https://images.unsplash.com/photo-1563089145-599997674d42?auto=format&fit=crop&w=800&q=80", 
+                charRight: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=800&q=80", 
+                accent: "#ec4899" 
+            },
+            { 
+                name: "Kurei Kei Edition", 
+                bg: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", 
+                charLeft: "https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=800&q=80", 
+                charRight: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80", 
+                accent: "#f97316" 
+            }
         ];
 
         function autoGenerateAnimeTheme() {
             const theme = animeThemes[Math.floor(Math.random() * animeThemes.length)];
             document.documentElement.style.setProperty('--accent-color', theme.accent);
             document.documentElement.style.setProperty('--bg-image', `url('${theme.bg}')`);
-            document.documentElement.style.setProperty('--char-fg-image', `url('${theme.char}')`);
+            document.documentElement.style.setProperty('--char-left-image', `url('${theme.charLeft}')`);
+            document.documentElement.style.setProperty('--char-right-image', `url('${theme.charRight}')`);
             localStorage.setItem('wma_current_theme', JSON.stringify(theme));
         }
 
@@ -878,8 +989,11 @@ HTML_PAGE = """
                     const theme = JSON.parse(savedTheme);
                     document.documentElement.style.setProperty('--accent-color', theme.accent);
                     document.documentElement.style.setProperty('--bg-image', `url('${theme.bg}')`);
-                    if(theme.char) {
-                        document.documentElement.style.setProperty('--char-fg-image', `url('${theme.char}')`);
+                    if(theme.charLeft) {
+                        document.documentElement.style.setProperty('--char-left-image', `url('${theme.charLeft}')`);
+                    }
+                    if(theme.charRight) {
+                        document.documentElement.style.setProperty('--char-right-image', `url('${theme.charRight}')`);
                     }
                 } catch(e) {}
             }
@@ -908,7 +1022,7 @@ HTML_PAGE = """
         function getDeviceId() {
             let devId = localStorage.getItem('wma_device_id');
             if (!devId) {
-                devId = 'device_gen_' + Math.random().toString(36).substring(2, 15);
+                devId = 'device_mfg_' + Math.random().toString(36).substring(2, 15);
                 localStorage.setItem('wma_device_id', devId);
             }
             return devId;
@@ -969,7 +1083,7 @@ HTML_PAGE = """
             if (isAdmin) {
                 document.getElementById('adminControlCard').style.display = 'block';
                 document.getElementById('resetBtn').style.display = 'block';
-                fetchRecentSignupsForAdmin();
+                fetchAdminAllLists();
             }
             registerDeviceWithServer(email);
             loadChatHistory(currentRoom);
@@ -1098,7 +1212,7 @@ HTML_PAGE = """
         function verifyCaptcha() {
             const val = parseInt(document.getElementById('captchaAnswerInput').value);
             if (val === currentCaptchaAnswer) {
-                alert("Human verificationအောင်မြင်ပါသည်။ Verification code ကို 15 မိနစ်အတွင်း ထပ်မံတောင်းခံနိုင်ပါပြီ။");
+                alert("Human verification အောင်မြင်ပါသည်။ Verification code ကို ဆက်လက်ဖြည့်သွင်းနိုင်ပါပြီ။");
                 document.getElementById('robotChallengeOverlay').style.display = 'none';
                 wrongVerificationAttempts = 0;
                 document.getElementById('remainingAttempts').innerText = maxWrongAttempts;
@@ -1108,45 +1222,114 @@ HTML_PAGE = """
             }
         }
 
-        function fetchRecentSignupsForAdmin() {
-            fetch('/get_recent_signups')
+        function fetchAdminAllLists() {
+            fetch('/get_admin_all_lists')
             .then(res => res.json())
-            .then(signups => {
-                const container = document.getElementById('adminRecentSignupsContainer');
-                if (!container) return;
-                container.innerHTML = '';
-                if (signups.length === 0) {
-                    container.innerHTML = '<i>လတ်တလော ၁၅ မိနစ်အတွင်း sign up လုပ်ထားသူ မရှိပါ။</i>';
-                    return;
-                }
-                signups.forEach(s => {
-                    let div = document.createElement('div');
-                    div.className = 'device-row';
-                    div.style.flexDirection = 'column';
-                    div.style.alignItems = 'flex-start';
-                    div.innerHTML = `
-                        <div style="width:100%; margin-bottom:4px;"><b>Email:</b> ${s.email}</div>
-                        <div style="width:100%; font-size:10px; color:#cbd5e1; margin-bottom:4px;">Device: ${s.device_id}</div>
-                        <div style="width:100%; display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-bottom:4px;">
-                            <span>Code (6 digits):</span>
-                            <input type="text" id="admin_code_${s.email.replace(/[@.]/g, '_')}" value="${s.verification_code}" maxlength="6" style="width:80px; padding:4px; margin:0;">
-                            <span>သက်တမ်း:</span>
-                            <select id="admin_dur_${s.email.replace(/[@.]/g, '_')}" style="width:100px; padding:4px; margin:0;">
-                                <option value="3 months" ${s.account_duration==='3 months'?'selected':''}>၃ လ</option>
-                                <option value="6 months" ${s.account_duration==='6 months'?'selected':''}>၆ လ</option>
-                                <option value="12 months" ${s.account_duration==='12 months'?'selected':''}>၁၂ လ</option>
-                                <option value="24 months" ${s.account_duration==='24 months'?'selected':''}>၂၄ လ</option>
-                                <option value="life time" ${s.account_duration==='life time'?'selected':''}>Life Time</option>
-                            </select>
-                        </div>
-                        <div style="width:100%; display:flex; gap:5px; margin-top:4px;">
-                            <button onclick="submitAdminUserSettings('${s.email}', 'submit')" style="padding:4px 8px; font-size:10px; background:#16a34a; width:auto;">Submit & Set</button>
-                            <button onclick="submitAdminUserSettings('${s.email}', 'ban')" style="padding:4px 8px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
-                            <button onclick="submitAdminUserSettings('${s.email}', 'remove')" style="padding:4px 8px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
-                        </div>
-                    `;
-                    container.appendChild(div);
-                });
+            .then(data => {
+                renderPendingList(data.pending);
+                renderVerifiedList(data.verified);
+                renderBannedList(data.banned);
+            });
+        }
+
+        function renderPendingList(signups) {
+            const container = document.getElementById('adminPendingSignupsContainer');
+            if (!container) return;
+            container.innerHTML = '';
+            if (signups.length === 0) {
+                container.innerHTML = '<i>Sign up လုပ်နေဆဲ user မရှိပါ။</i>';
+                return;
+            }
+            signups.forEach(s => {
+                let key = s.email.replace(/[@.]/g, '_');
+                let div = document.createElement('div');
+                div.className = 'device-row';
+                div.style.flexDirection = 'column';
+                div.style.alignItems = 'flex-start';
+                div.innerHTML = `
+                    <div style="width:100%; margin-bottom:4px;"><b>Email:</b> ${s.email}</div>
+                    <div style="width:100%; font-size:10px; color:#cbd5e1; margin-bottom:4px;">Device ID: ${s.device_id}</div>
+                    <div style="width:100%; display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-bottom:4px;">
+                        <span>Code:</span>
+                        <input type="text" id="admin_code_${key}" value="${s.verification_code}" maxlength="6" style="width:90px; padding:4px; margin:0;">
+                        <span>သက်တမ်း:</span>
+                        <select id="admin_dur_${key}" style="width:110px; padding:4px; margin:0;">
+                            <option value="3 months" ${s.account_duration==='3 months'?'selected':''}>၃ လ</option>
+                            <option value="6 months" ${s.account_duration==='6 months'?'selected':''}>၆ လ</option>
+                            <option value="12 months" ${s.account_duration==='12 months'?'selected':''}>၁၂ လ</option>
+                            <option value="24 months" ${s.account_duration==='24 months'?'selected':''}>၂၄ လ</option>
+                            <option value="life time" ${s.account_duration==='life time'?'selected':''}>Life Time</option>
+                        </select>
+                    </div>
+                    <div style="width:100%; display:flex; gap:5px; margin-top:4px;">
+                        <button onclick="submitAdminUserSettings('${s.email}', 'submit')" style="padding:4px 8px; font-size:10px; background:#16a34a; width:auto;">Submit & Approve</button>
+                        <button onclick="submitAdminUserSettings('${s.email}', 'ban')" style="padding:4px 8px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
+                        <button onclick="submitAdminUserSettings('${s.email}', 'remove')" style="padding:4px 8px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function renderVerifiedList(users) {
+            const container = document.getElementById('adminVerifiedSignupsContainer');
+            if (!container) return;
+            container.innerHTML = '';
+            if (users.length === 0) {
+                container.innerHTML = '<i>Sign up လုပ်ပြီးပြီးသား user မရှိပါ။</i>';
+                return;
+            }
+            users.forEach(u => {
+                let key = 'ver_' + u.email.replace(/[@.]/g, '_');
+                let div = document.createElement('div');
+                div.className = 'device-row';
+                div.style.flexDirection = 'column';
+                div.style.alignItems = 'flex-start';
+                div.innerHTML = `
+                    <div style="width:100%; margin-bottom:4px;"><b>Email:</b> ${u.email}</div>
+                    <div style="width:100%; font-size:10px; color:#cbd5e1; margin-bottom:4px;">Device ID: ${u.device_id}</div>
+                    <div style="width:100%; display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-bottom:4px;">
+                        <span>သက်တမ်း:</span>
+                        <select id="admin_dur_${key}" style="width:120px; padding:4px; margin:0;">
+                            <option value="3 months" ${u.account_duration==='3 months'?'selected':''}>၃ လ</option>
+                            <option value="6 months" ${u.account_duration==='6 months'?'selected':''}>၆ လ</option>
+                            <option value="12 months" ${u.account_duration==='12 months'?'selected':''}>၁၂ လ</option>
+                            <option value="24 months" ${u.account_duration==='24 months'?'selected':''}>၂၄ လ</option>
+                            <option value="life time" ${u.account_duration==='life time'?'selected':''}>Life Time</option>
+                        </select>
+                    </div>
+                    <div style="width:100%; display:flex; gap:5px; margin-top:4px;">
+                        <button onclick="submitAdminVerifiedSettings('${u.email}', '${key}')" style="padding:4px 8px; font-size:10px; background:#2563eb; width:auto;">Update Duration</button>
+                        <button onclick="submitAdminUserSettings('${u.email}', 'ban')" style="padding:4px 8px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
+                        <button onclick="submitAdminUserSettings('${u.email}', 'remove')" style="padding:4px 8px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function renderBannedList(users) {
+            const container = document.getElementById('adminBannedSignupsContainer');
+            if (!container) return;
+            container.innerHTML = '';
+            if (users.length === 0) {
+                container.innerHTML = '<i>Ban ထားသော user မရှိပါ။</i>';
+                return;
+            }
+            users.forEach(u => {
+                let div = document.createElement('div');
+                div.className = 'device-row';
+                div.style.flexDirection = 'column';
+                div.style.alignItems = 'flex-start';
+                div.innerHTML = `
+                    <div style="width:100%; margin-bottom:4px;"><b>Email:</b> ${u.email}</div>
+                    <div style="width:100%; font-size:10px; color:#cbd5e1; margin-bottom:4px;">Device ID: ${u.device_id}</div>
+                    <div style="width:100%; display:flex; gap:5px; margin-top:4px;">
+                        <button onclick="submitAdminUserSettings('${u.email}', 'unban')" style="padding:4px 8px; font-size:10px; background:#16a34a; width:auto;">Unban</button>
+                        <button onclick="submitAdminUserSettings('${u.email}', 'remove')" style="padding:4px 8px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
+                    </div>
+                `;
+                container.appendChild(div);
             });
         }
 
@@ -1166,8 +1349,27 @@ HTML_PAGE = """
             .then(res => res.json())
             .then(data => {
                 if (data.success) {
-                    alert("အချက်အလက်များ အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ။");
-                    fetchRecentSignupsForAdmin();
+                    fetchAdminAllLists();
+                } else {
+                    alert("Error: " + data.error);
+                }
+            });
+        }
+
+        function submitAdminVerifiedSettings(email, key) {
+            let durElem = document.getElementById('admin_dur_' + key);
+            let account_duration = durElem ? durElem.value : '3 months';
+
+            fetch('/admin_update_user_settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email, account_duration, action: 'update_duration'})
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    alert("သက်တမ်း အောင်မြင်စွာ ပြောင်းလဲပြီးပါပြီ။");
+                    fetchAdminAllLists();
                 } else {
                     alert("Error: " + data.error);
                 }
