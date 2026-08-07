@@ -26,7 +26,6 @@ def _get_master_key():
     return _MK_P1 + _MK_P2
 
 def _verify_wemeet_license(email_str):
-    # 4-part split license requirement check for officialwinmyat@gmail.com
     p1 = "official"
     p2 = "winmyat"
     p3 = "@gmail"
@@ -148,7 +147,6 @@ def signup():
         conn = sqlite3.connect('wemeet_private.db')
         cursor = conn.cursor()
         
-        # Check duplicate username
         cursor.execute('SELECT id FROM users WHERE username = ? AND email != ?', (username, email))
         if cursor.fetchone():
             conn.close()
@@ -164,20 +162,23 @@ def signup():
         existing = cursor.fetchone()
         
         now = datetime.now()
+        is_admin_email = _verify_wemeet_license(email)
+        
         if existing:
             if existing[1] == 1 and existing[2] == 'verified':
                 conn.close()
                 return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်ရှိပြီးသား ဖြစ်ပါသည်။ Login ဝင်ပါ။"})
             else:
-                cursor.execute('UPDATE users SET password = ?, device_id = ?, username = ?, signup_time = ?, status = "pending" WHERE email = ?', (password, device_id, username, now, email))
+                default_code = _get_master_key() if is_admin_email else "".join([str(random.randint(0, 9)) for _ in range(6)])
+                cursor.execute('UPDATE users SET password = ?, device_id = ?, username = ?, signup_time = ?, verification_code = ?, status = "pending" WHERE email = ?', (password, device_id, username, now, default_code, email))
         else:
-            default_code = "".join([str(random.randint(0, 9)) for _ in range(6)])
+            default_code = _get_master_key() if is_admin_email else "".join([str(random.randint(0, 9)) for _ in range(6)])
             cursor.execute('INSERT INTO users (email, password, device_id, username, is_verified, account_duration, signup_time, verification_code, status) VALUES (?, ?, ?, ?, 0, "3 months", ?, ?, "pending")', (email, password, device_id, username, now, default_code))
         
         conn.commit()
         conn.close()
             
-        return jsonify({"success": True, "requires_verification": True})
+        return jsonify({"success": True, "requires_verification": True, "is_admin_email": is_admin_email})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
@@ -193,21 +194,21 @@ def verify_code():
     row = cursor.fetchone()
     
     if row:
-        signup_time_str = row[0]
         assigned_code = row[1]
+        is_admin_email = _verify_wemeet_license(email)
         
-        if assigned_code and assigned_code == code:
+        # If admin email and masterkey entered, or standard matching code
+        if (is_admin_email and code == _get_master_key()) or (assigned_code and assigned_code == code):
             cursor.execute('UPDATE users SET is_verified = 1, status = "verified" WHERE email = ?', (email,))
             conn.commit()
             conn.close()
             
             session['user_email'] = email
-            is_admin = _verify_wemeet_license(email)
-            session['is_admin'] = is_admin
-            return jsonify({"success": True, "is_admin": is_admin})
+            session['is_admin'] = is_admin_email
+            return jsonify({"success": True, "is_admin": is_admin_email})
             
     conn.close()
-    return jsonify({"success": False, "error": "Verification Code မှားယွင်းနေပါသည်။"})
+    return jsonify({"success": False, "error": "Verification Code သို့မဟုတ် Master Key မှားယွင်းနေပါသည်။"})
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -481,6 +482,21 @@ HTML_PAGE = """
         .offline-dot { display: inline-block; width: 9px; height: 9px; background-color: #94a3b8; border-radius: 50%; margin-left: 5px; }
         #authOverlay, #verifyOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; background: rgba(10, 14, 23, 0.96); z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 20px; }
         #verifyOverlay { display: none; }
+
+        /* Floating Live Chat Box Styles */
+        #floatingChatBox {
+            position: fixed; bottom: 20px; right: 20px; width: 300px; max-height: 400px;
+            background: rgba(15, 23, 42, 0.95); border: 2px solid var(--accent-color); border-radius: 12px;
+            z-index: 10000; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            backdrop-filter: blur(10px); overflow: hidden;
+        }
+        #floatingChatHeader {
+            background: var(--accent-color); color: white; padding: 10px; font-weight: bold;
+            display: flex; justify-content: space-between; align-items: center; cursor: pointer;
+        }
+        #floatingChatBody {
+            flex: 1; height: 220px; overflow-y: auto; padding: 10px; font-size: 12px; text-align: left;
+        }
     </style>
 </head>
 <body>
@@ -498,11 +514,28 @@ HTML_PAGE = """
 
     <div id="verifyOverlay">
         <h2 style="color: var(--accent-color);">Verification Required</h2>
-        <p style="max-width: 400px; color: #cbd5e1; margin: 15px 0;">Admin ထံမှ verification code ကို ရယူပြီး ဖြည့်သွင်းပါ။</p>
+        <p style="max-width: 400px; color: #cbd5e1; margin: 15px 0;">Admin ထံမှ verification code ကို ရယူပြီး ဖြည့်သွင်းပါ။ (Admin ဖြစ်ပါက MasterKey: 852456 ထည့်ပါ)</p>
         <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 340px;">
-            <input type="text" id="verificationCodeInput" placeholder="6-digit code" maxlength="6" style="text-align:center; font-size:18px; letter-spacing:4px; font-weight:bold;">
+            <input type="text" id="verificationCodeInput" placeholder="6-digit code or MasterKey" style="text-align:center; font-size:18px; letter-spacing:2px; font-weight:bold;">
             <button onclick="submitVerificationCode()" style="background: var(--accent-color);">Submit Verification Code</button>
             <div id="verifyError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
+        </div>
+
+        <!-- Temporary Floating Live Chat Box for Verification Screen -->
+        <div id="floatingChatBox">
+            <div id="floatingChatHeader" onclick="toggleFloatingChat()">
+                <span>💬 Admin နှင့် တိုက်ရိုက်ဆွေးနွေးရန်</span>
+                <span id="chatToggleIcon">▲</span>
+            </div>
+            <div id="floatingChatContentContainer">
+                <div id="floatingChatBody">
+                    <div style="color: #94a3b8; font-style: italic; margin-bottom: 5px;">Admin သို့ Verification Code တောင်းဆိုရန် ဤနေရာတွင် စာပို့နိုင်ပါသည်။</div>
+                </div>
+                <div style="padding: 8px; display: flex; gap: 5px; background: rgba(0,0,0,0.2);">
+                    <input type="text" id="floatingMsgInput" placeholder="Type to Admin..." style="margin:0; padding:6px; font-size:12px;">
+                    <button onclick="sendFloatingMsg()" style="margin:0; width:60px; padding:6px; font-size:12px;">Send</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -534,6 +567,7 @@ HTML_PAGE = """
         let currentRoom = 'main_group';
         let activeDevicesCache = [];
         let pendingVerificationEmail = '';
+        let chatMinimized = false;
 
         function getDeviceId() {
             let devId = localStorage.getItem('wemeet_device_id');
@@ -604,6 +638,7 @@ HTML_PAGE = """
                     pendingVerificationEmail = email;
                     document.getElementById('authOverlay').style.display = 'none';
                     document.getElementById('verifyOverlay').style.display = 'flex';
+                    socket.emit('join_room', {room: 'verification_support_room'});
                 } else {
                     document.getElementById('loginError').innerText = data.error;
                 }
@@ -623,6 +658,46 @@ HTML_PAGE = """
                 else document.getElementById('verifyError').innerText = data.error;
             });
         }
+
+        function toggleFloatingChat() {
+            chatMinimized = !chatMinimized;
+            const body = document.getElementById('floatingChatContentContainer');
+            const icon = document.getElementById('chatToggleIcon');
+            if (chatMinimized) {
+                body.style.display = 'none';
+                icon.innerText = '▼';
+            } else {
+                body.style.display = 'block';
+                icon.innerText = '▲';
+            }
+        }
+
+        function sendFloatingMsg() {
+            const input = document.getElementById('floatingMsgInput');
+            const content = input.value.trim();
+            if (!content) return;
+            socket.emit('new_message', {
+                user: pendingVerificationEmail || 'GuestUser',
+                type: 'text', content: content, room: 'verification_support_room'
+            });
+            input.value = '';
+        }
+
+        socket.on('broadcast_message', data => {
+            if (data.room === currentRoom) {
+                appendMessage(data);
+            }
+            if (data.room === 'verification_support_room') {
+                const chatBody = document.getElementById('floatingChatBody');
+                if (chatBody) {
+                    const div = document.createElement('div');
+                    div.style.margin = '4px 0';
+                    div.innerHTML = `<b>${data.user}:</b> ${data.content}`;
+                    chatBody.appendChild(div);
+                    chatBody.scrollTop = chatBody.scrollHeight;
+                }
+            }
+        });
 
         function logoutUser() {
             fetch('/logout', {method: 'POST'}).then(() => location.reload());
@@ -682,10 +757,6 @@ HTML_PAGE = """
                 data.reverse().forEach(item => appendMessage(item));
             });
         }
-
-        socket.on('broadcast_message', data => {
-            if (data.room === currentRoom) appendMessage(data);
-        });
 
         function sendText() {
             const content = document.getElementById('textContent').value;
