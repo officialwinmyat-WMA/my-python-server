@@ -695,8 +695,7 @@ def handle_reset():
         conn.close()
         socketio.emit('storage_reset')
 
-HTML_PAGE = """
-<!DOCTYPE html>
+HTML_PAGE = """<!DOCTYPE html>
 <html>
 <head>
     <title>WeMeet - Private & Group Anime Chat Hub</title>
@@ -1998,4 +1997,4 @@ HTML_PAGE = """
     </script>
 </body>
 </html>
-```[cite: 12]
+"""
