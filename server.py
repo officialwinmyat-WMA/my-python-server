@@ -531,13 +531,13 @@ HTML_PAGE = """
     <style>
         :root {
             --bg-color: #0f172a;
-            --panel-bg: rgba(20, 24, 33, 0.88);
+            --panel-bg: rgba(20, 24, 33, 0.75);
             --text-color: #f8fafc;
             --accent-color: #ec4899;
-            --chat-bg: rgba(10, 14, 23, 0.85);
-            --stream-bg: rgba(20, 24, 33, 0.85);
+            --chat-bg: rgba(10, 14, 23, 0.65);
+            --stream-bg: rgba(20, 24, 33, 0.65);
             --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80');
-            --char-fg-image: none;
+            --char-fg-image: url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80');
         }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -549,15 +549,21 @@ HTML_PAGE = """
             display: flex; height: 100vh; overflow: hidden;
             position: relative;
         }
+        /* Background Anime Character Animation / Display Layer to fill black dark gaps */
         body::before {
             content: "";
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
             background-image: var(--char-fg-image);
             background-size: cover; background-position: center;
-            opacity: 0.15;
+            opacity: 0.35;
             pointer-events: none;
             z-index: 1;
+            animation: animePulse 10s ease-in-out infinite alternate;
+        }
+        @keyframes animePulse {
+            0% { transform: scale(1); opacity: 0.3; }
+            100% { transform: scale(1.05); opacity: 0.45; }
         }
         .left-pane, .right-pane {
             position: relative;
@@ -567,12 +573,12 @@ HTML_PAGE = """
         .left-pane {
             width: 50%; height: 100vh; overflow-y: auto; padding: 15px; box-sizing: border-box;
             background: var(--panel-bg); border-right: 3px solid var(--accent-color);
-            backdrop-filter: blur(12px);
+            backdrop-filter: blur(8px);
             transition: all 0.3s ease;
         }
         .right-pane {
             width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 15px; box-sizing: border-box;
-            background: var(--stream-bg); backdrop-filter: blur(12px);
+            background: var(--stream-bg); backdrop-filter: blur(8px);
             border-left: 3px solid var(--accent-color);
             transition: all 0.3s ease;
         }
@@ -585,7 +591,7 @@ HTML_PAGE = """
         }
 
         .card {
-            background: rgba(255,255,255,0.08); padding: 12px; border-radius: 10px; margin-bottom: 12px;
+            background: rgba(255,255,255,0.12); padding: 12px; border-radius: 10px; margin-bottom: 12px;
             border: 2px solid var(--accent-color); backdrop-filter: blur(8px);
             box-shadow: 0 0 15px color-mix(in srgb, var(--accent-color) 35%, transparent);
             transition: all 0.3s ease;
@@ -610,7 +616,7 @@ HTML_PAGE = """
             -webkit-overflow-scrolling: touch;
         }
         .history-item {
-            padding: 10px; margin-bottom: 8px; background: rgba(255,255,255,0.08);
+            padding: 10px; margin-bottom: 8px; background: rgba(255,255,255,0.12);
             border-left: 6px solid var(--accent-color); border-radius: 8px; font-size: 13px; word-break: break-all; position: relative;
             box-shadow: 0 2px 8px rgba(0,0,0,0.3); transition: all 0.3s ease;
         }
