@@ -1,11 +1,11 @@
 import os
 import sqlite3
 import random
-import base64
+import requests
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template_string, session, send_file
 
-# Python compatibility fix for gevent
+# Python compatibility fix for gevent (Completely disabled ssl patching to prevent recursion error)
 import sys
 from gevent import monkey
 try:
@@ -19,18 +19,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "wma_qq_secure_secret_key_123")
 from flask_socketio import SocketIO, emit
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
-# Master Key 852456 ကို ၄ နေရာခွဲမြှုပ်၍ လုံခြုံရေးနှင့် လိုင်စင် ခွင့်ပြုချက်အတွက် အသုံးပြုထားခြင်း[cite: 1]
-MK_PART_1 = "852"
-MK_PART_2 = "456"
-LICENSE_CHECK_1 = "officialwinmyat"
-LICENSE_CHECK_2 = "@gmail.com"
-
-def get_master_key():
-    return MK_PART_1 + MK_PART_2
-
-def get_admin_email():
-    return LICENSE_CHECK_1 + LICENSE_CHECK_2
-
+# Database Initialization (Supporting both Group and Private Chats)
 def init_db():
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
@@ -66,35 +55,7 @@ def init_db():
             verification_code TEXT,
             is_verified INTEGER DEFAULT 0,
             account_duration TEXT DEFAULT '3 months',
-            signup_time DATETIME,
-            status TEXT DEFAULT 'pending',
-            username TEXT,
-            age INTEGER,
-            sex TEXT,
-            country TEXT,
-            province TEXT,
-            city TEXT,
-            profile_pic_1 TEXT,
-            profile_pic_2 TEXT,
-            profile_pic_3 TEXT,
-            profile_pic_4 TEXT,
-            profile_pic_5 TEXT,
-            active_profile_pic TEXT,
-            rose_bought INTEGER DEFAULT 0,
-            orchid_bought INTEGER DEFAULT 0,
-            jasmine_bought INTEGER DEFAULT 0,
-            rose_received INTEGER DEFAULT 0,
-            orchid_received INTEGER DEFAULT 0,
-            jasmine_received INTEGER DEFAULT 0,
-            redeemed_items TEXT DEFAULT ''
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS admin_prices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            box_type TEXT UNIQUE,
-            price REAL,
-            redeem_value REAL
+            signup_time DATETIME
         )
     ''')
     conn.commit()
@@ -136,10 +97,9 @@ def admin_login():
     password = data.get('password', '')
     master_key = data.get('master_key', '').strip()
     
-    expected_master_key = get_master_key()
-    admin_mail = get_admin_email()
+    expected_master_key = os.environ.get("UNIVERSAL_MASTER_KEY", "852456")
     
-    if email == admin_mail and master_key == expected_master_key:
+    if email == 'officialwinmyat@gmail.com' and master_key == expected_master_key:
         session['user_email'] = email
         session['is_admin'] = True
         return jsonify({"success": True, "is_admin": True})
@@ -151,7 +111,6 @@ def signup():
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
     device_id = data.get('device_id', '')
-    username = data.get('username', '').strip()
     
     if not email or not password:
         return jsonify({"success": False, "error": "Email နှင့် Password ထည့်ရန် လိုအပ်ပါသည်။"})
@@ -166,33 +125,18 @@ def signup():
             conn.close()
             return jsonify({"success": False, "error": "ဤ Device အား Ban ထားပါသဖြင့် Sign up လုပ်၍ မရပါ။"})
             
-        cursor.execute('SELECT id, is_verified, status FROM users WHERE email = ?', (email,))
+        cursor.execute('SELECT id, is_verified FROM users WHERE email = ?', (email,))
         existing = cursor.fetchone()
         
         now = datetime.now()
-        admin_mail = get_admin_email()
-        master_key = get_master_key()
-
-        if email == admin_mail:
-            if existing:
-                cursor.execute('UPDATE users SET password = ?, device_id = ?, signup_time = ?, status = "verified", is_verified = 1 WHERE email = ?', (password, device_id, now, email))
-            else:
-                cursor.execute('INSERT INTO users (email, password, device_id, is_verified, account_duration, signup_time, verification_code, status, username) VALUES (?, ?, ?, 1, "life time", ?, ?, "verified", ?)', (email, password, device_id, now, master_key, username or 'Admin'))
-            conn.commit()
-            conn.close()
-            session['user_email'] = email
-            session['is_admin'] = True
-            return jsonify({"success": True, "requires_verification": False, "is_admin": True})
-
         if existing:
-            if existing[1] == 1 and existing[2] == 'verified':
+            if existing[1] == 1:
                 conn.close()
                 return jsonify({"success": False, "error": "ဤ Email ဖြင့် အကောင့်ရှိပြီးသား ဖြစ်ပါသည်။ Login ဝင်ပါ။"})
             else:
-                cursor.execute('UPDATE users SET password = ?, device_id = ?, signup_time = ?, status = "pending", username = ? WHERE email = ?', (password, device_id, now, username, email))
+                cursor.execute('UPDATE users SET password = ?, device_id = ?, signup_time = ? WHERE email = ?', (password, device_id, now, email))
         else:
-            default_code = "".join([str(random.randint(0, 9)) for _ in range(6)])
-            cursor.execute('INSERT INTO users (email, password, device_id, is_verified, account_duration, signup_time, verification_code, status, username) VALUES (?, ?, ?, 0, "3 months", ?, ?, "pending", ?)', (email, password, device_id, now, default_code, username))
+            cursor.execute('INSERT INTO users (email, password, device_id, is_verified, account_duration, signup_time) VALUES (?, ?, ?, 0, ?, ?)', (email, password, device_id, '3 months', now))
         
         conn.commit()
         conn.close()
@@ -213,17 +157,6 @@ def verify_code():
     cursor.execute('SELECT signup_time, verification_code FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
     
-    admin_mail = get_admin_email()
-    master_key = get_master_key()
-
-    if email == admin_mail and code == master_key:
-        cursor.execute('UPDATE users SET is_verified = 1, status = "verified" WHERE email = ?', (email,))
-        conn.commit()
-        conn.close()
-        session['user_email'] = email
-        session['is_admin'] = True
-        return jsonify({"success": True, "is_admin": True})
-
     if row:
         signup_time_str = row[0]
         assigned_code = row[1]
@@ -235,12 +168,12 @@ def verify_code():
                 return jsonify({"success": False, "error": "Verification သက်တမ်း ၁၅ မိနစ် ကျော်လွန်သွားပါပြီ။ Code ထပ်တောင်းပါ။"})
         
         if assigned_code and assigned_code == code:
-            cursor.execute('UPDATE users SET is_verified = 1, status = "verified" WHERE email = ?', (email,))
+            cursor.execute('UPDATE users SET is_verified = 1 WHERE email = ?', (email,))
             conn.commit()
             conn.close()
             
             session['user_email'] = email
-            is_admin = (email == admin_mail)
+            is_admin = (email == 'officialwinmyat@gmail.com')
             session['is_admin'] = is_admin
             return jsonify({"success": True, "is_admin": is_admin})
             
@@ -264,32 +197,24 @@ def login():
         conn.close()
         return jsonify({"success": False, "error": "ဤ Device အား Ban ထားပါသည်။"})
 
-    cursor.execute('SELECT password, is_verified, device_id, account_duration, status FROM users WHERE email = ?', (email,))
+    cursor.execute('SELECT password, is_verified, device_id, account_duration FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
     
-    admin_mail = get_admin_email()
-
     if row:
-        stored_password, is_verified, stored_device_id, account_duration, user_status = row
-        if user_status == 'banned':
-            conn.close()
-            return jsonify({"success": False, "error": "ဤအကောင့်အား Ban ထားပါသည်။"})
-        if is_verified == 0 or user_status != 'verified':
+        stored_password, is_verified, stored_device_id, account_duration = row
+        if is_verified == 0:
             conn.close()
             return jsonify({"success": False, "error": "အကောင့်ကို Code ဖြင့် အတည်ပြုပြီးသား မရှိသေးပါ။"})
             
-        if stored_password == password and (stored_device_id == device_id or not stored_device_id):
+        if stored_password == password and stored_device_id == device_id:
             session['user_email'] = email
-            is_admin = (email == admin_mail)
+            is_admin = (email == 'officialwinmyat@gmail.com')
             session['is_admin'] = is_admin
             
             token = ""
             if remember:
                 token = f"token_{email}_{device_id}"
-                cursor.execute('UPDATE users SET remember_token = ?, device_id = ? WHERE email = ?', (token, device_id, email))
-                conn.commit()
-            else:
-                cursor.execute('UPDATE users SET device_id = ? WHERE email = ?', (device_id, email))
+                cursor.execute('UPDATE users SET remember_token = ? WHERE email = ?', (token, email))
                 conn.commit()
             
             conn.close()
@@ -313,15 +238,13 @@ def check_remember():
         
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT remember_token, device_id, account_duration, status FROM users WHERE email = ?', (email,))
+    cursor.execute('SELECT remember_token, device_id, account_duration FROM users WHERE email = ?', (email,))
     row = cursor.fetchone()
     conn.close()
     
-    admin_mail = get_admin_email()
-
-    if row and row[0] == token and row[3] != 'banned':
+    if row and row[0] == token and row[1] == device_id:
         session['user_email'] = email
-        is_admin = (email == admin_mail)
+        is_admin = (email == 'officialwinmyat@gmail.com')
         session['is_admin'] = is_admin
         return jsonify({"logged_in": True, "email": email, "is_admin": is_admin, "account_duration": row[2]})
     
@@ -359,20 +282,14 @@ def logout():
 def check_session():
     if 'user_email' in session:
         email = session['user_email']
-        admin_mail = get_admin_email()
-        is_admin = (email == admin_mail)
+        is_admin = (email == 'officialwinmyat@gmail.com')
         session['is_admin'] = is_admin
         
         conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
-        cursor.execute('SELECT account_duration, status FROM users WHERE email = ?', (email,))
+        cursor.execute('SELECT account_duration FROM users WHERE email = ?', (email,))
         row = cursor.fetchone()
         conn.close()
-        
-        if row and row[1] == 'banned':
-            session.clear()
-            return jsonify({"logged_in": False})
-            
         duration = row[0] if row else '3 months'
         
         return jsonify({
@@ -383,151 +300,32 @@ def check_session():
         })
     return jsonify({"logged_in": False})
 
-@app.route('/get_user_profile', methods=['GET'])
-def get_user_profile():
-    email = request.args.get('email', '').strip().lower()
-    if not email and 'user_email' in session:
-        email = session['user_email']
-    if not email:
-        return jsonify({"success": False, "error": "Unauthorized"})
+@app.route('/get_recent_signups', methods=['GET'])
+def get_recent_signups():
+    if session.get('user_email') != 'officialwinmyat@gmail.com':
+        return jsonify([])
     
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
-    cursor.execute('''SELECT username, age, sex, country, province, city, 
-                      profile_pic_1, profile_pic_2, profile_pic_3, profile_pic_4, profile_pic_5, active_profile_pic,
-                      rose_bought, orchid_bought, jasmine_bought, rose_received, orchid_received, jasmine_received, redeemed_items
-                      FROM users WHERE email = ?''', (email,))
-    row = cursor.fetchone()
-    conn.close()
-    
-    if not row:
-        return jsonify({"success": False, "error": "User not found"})
-        
-    return jsonify({
-        "success": True,
-        "username": row[0] or '',
-        "age": row[1],
-        "sex": row[2] or '',
-        "country": row[3] or '',
-        "province": row[4] or '',
-        "city": row[5] or '',
-        "pictures": [row[6], row[7], row[8], row[9], row[10]],
-        "active_profile_pic": row[11] or '',
-        "rose_bought": row[12] or 0,
-        "orchid_bought": row[13] or 0,
-        "jasmine_bought": row[14] or 0,
-        "rose_received": row[15] or 0,
-        "orchid_received": row[16] or 0,
-        "jasmine_received": row[17] or 0,
-        "redeemed_items": row[18] or ''
-    })
-
-@app.route('/update_user_profile', methods=['POST'])
-def update_user_profile():
-    if 'user_email' not in session:
-        return jsonify({"success": False, "error": "Unauthorized"})
-    email = session['user_email']
-    data = request.json
-    
-    username = data.get('username', '').strip()
-    age = data.get('age')
-    sex = data.get('sex', '').strip()
-    country = data.get('country', '').strip()
-    province = data.get('province', '').strip()
-    city = data.get('city', '').strip()
-    pictures = data.get('pictures', [])
-    active_pic = data.get('active_profile_pic', '')
-
-    conn = sqlite3.connect('wma_qq_private.db')
-    cursor = conn.cursor()
-    
-    if username:
-        if len(username) > 15:
-            conn.close()
-            return jsonify({"success": False, "error": "Username must be max 15 letters"})
-        cursor.execute('SELECT id FROM users WHERE username = ? AND email != ?', (username, email))
-        if cursor.fetchone():
-            conn.close()
-            return jsonify({"success": False, "error": "Username already taken"})
-
-    cursor.execute('''UPDATE users SET username = COALESCE(?, username), 
-                      age = COALESCE(?, age), sex = COALESCE(?, sex), 
-                      country = COALESCE(?, country), province = COALESCE(?, province), city = COALESCE(?, city),
-                      profile_pic_1 = COALESCE(?, profile_pic_1), profile_pic_2 = COALESCE(?, profile_pic_2),
-                      profile_pic_3 = COALESCE(?, profile_pic_3), profile_pic_4 = COALESCE(?, profile_pic_4),
-                      profile_pic_5 = COALESCE(?, profile_pic_5), active_profile_pic = COALESCE(?, active_profile_pic)
-                      WHERE email = ?''', 
-                   (username if username else None, age, sex if sex else None, 
-                    country if country else None, province if province else None, city if city else None,
-                    pictures[0] if len(pictures)>0 and pictures[0] else None,
-                    pictures[1] if len(pictures)>1 and pictures[1] else None,
-                    pictures[2] if len(pictures)>2 and pictures[2] else None,
-                    pictures[3] if len(pictures)>3 and pictures[3] else None,
-                    pictures[4] if len(pictures)>4 and pictures[4] else None,
-                    active_pic if active_pic else None, email))
-    conn.commit()
-    conn.close()
-    return jsonify({"success": True})
-
-@app.route('/get_admin_all_lists', methods=['GET'])
-def get_admin_all_lists():
-    admin_mail = get_admin_email()
-    if session.get('user_email') != admin_mail:
-        return jsonify({"pending": [], "verified": [], "banned": []})
-    
-    conn = sqlite3.connect('wma_qq_private.db')
-    cursor = conn.cursor()
-    
     fifteen_mins_ago = datetime.now() - timedelta(minutes=15)
-    cursor.execute('SELECT email, device_id, verification_code, account_duration, signup_time FROM users WHERE (signup_time >= ? OR is_verified = 0) AND status != "banned" AND email != ? ORDER BY signup_time DESC', (fifteen_mins_ago, admin_mail))
-    pending_rows = cursor.fetchall()
-    
-    cursor.execute('SELECT email, device_id, account_duration, signup_time FROM users WHERE is_verified = 1 AND status = "verified" AND email != ? ORDER BY signup_time DESC', (admin_mail,))
-    verified_rows = cursor.fetchall()
-    
-    cursor.execute('SELECT email, device_id, account_duration, signup_time FROM users WHERE status = "banned" AND email != ? ORDER BY signup_time DESC', (admin_mail,))
-    banned_rows = cursor.fetchall()
-    
+    cursor.execute('SELECT email, device_id, verification_code, account_duration, signup_time FROM users WHERE signup_time >= ?', (fifteen_mins_ago,))
+    rows = cursor.fetchall()
     conn.close()
     
-    pending_list = []
-    for r in pending_rows:
-        pending_list.append({
+    signups = []
+    for r in rows:
+        signups.append({
             "email": r[0],
             "device_id": r[1],
             "verification_code": r[2] or '',
             "account_duration": r[3] or '3 months',
             "signup_time": r[4]
         })
-        
-    verified_list = []
-    for r in verified_rows:
-        verified_list.append({
-            "email": r[0],
-            "device_id": r[1],
-            "account_duration": r[2] or '3 months',
-            "signup_time": r[3]
-        })
-        
-    banned_list = []
-    for r in banned_rows:
-        banned_list.append({
-            "email": r[0],
-            "device_id": r[1],
-            "account_duration": r[2] or '3 months',
-            "signup_time": r[3]
-        })
-        
-    return jsonify({
-        "pending": pending_list,
-        "verified": verified_list,
-        "banned": banned_list
-    })
+    return jsonify(signups)
 
 @app.route('/admin_update_user_settings', methods=['POST'])
 def admin_update_user_settings():
-    admin_mail = get_admin_email()
-    if session.get('user_email') != admin_mail:
+    if session.get('user_email') != 'officialwinmyat@gmail.com':
         return jsonify({"success": False, "error": "Unauthorized"})
         
     data = request.json
@@ -541,13 +339,9 @@ def admin_update_user_settings():
     
     if action == 'remove':
         cursor.execute('DELETE FROM users WHERE email = ?', (email,))
-        cursor.execute('DELETE FROM devices WHERE google_account = ?', (email,))
     elif action == 'ban':
-        cursor.execute('UPDATE users SET status = "banned" WHERE email = ?', (email,))
+        cursor.execute('UPDATE users SET verification_code = NULL WHERE email = ?', (email,))
         cursor.execute('UPDATE devices SET status = "banned" WHERE google_account = ?', (email,))
-    elif action == 'unban':
-        cursor.execute('UPDATE users SET status = "verified", is_verified = 1 WHERE email = ?', (email,))
-        cursor.execute('UPDATE devices SET status = "approved" WHERE google_account = ?', (email,))
     else:
         if code:
             cursor.execute('UPDATE users SET verification_code = ?, account_duration = ? WHERE email = ?', (code, duration, email))
@@ -568,15 +362,14 @@ def get_devices():
     rows = cursor.fetchall()
     conn.close()
     
-    admin_mail = get_admin_email()
     devices = []
     for r in rows:
         devices.append({
             "device_id": r[0],
             "account": r[1],
-            "status": 'approved' if r[1] == admin_mail else r[2],
+            "status": 'approved' if r[1] == 'officialwinmyat@gmail.com' else r[2],
             "active": True if r[3] else False,
-            "is_current_user_admin": session.get('user_email') == admin_mail
+            "is_current_user_admin": session.get('user_email') == 'officialwinmyat@gmail.com'
         })
     return jsonify(devices)
 
@@ -616,8 +409,7 @@ def handle_register_device(data):
     cursor.execute('SELECT status FROM devices WHERE device_id = ?', (dev_id,))
     row = cursor.fetchone()
     
-    admin_mail = get_admin_email()
-    status = 'approved' if google_acc == admin_mail else ('approved' if row and row[0] == 'approved' else 'pending')
+    status = 'approved' if google_acc == 'officialwinmyat@gmail.com' else ('approved' if row and row[0] == 'approved' else 'pending')
     
     if not row:
         cursor.execute('INSERT INTO devices (device_id, google_account, status, last_active) VALUES (?, ?, ?, ?)', (dev_id, google_acc, status, datetime.now()))
@@ -628,6 +420,28 @@ def handle_register_device(data):
     conn.close()
     socketio.emit('device_status_update', {'device_id': dev_id})
     socketio.emit('online_users_refresh')
+
+@socketio.on('admin_device_action')
+def handle_admin_action(data):
+    if session.get('user_email') != 'officialwinmyat@gmail.com':
+        return
+    dev_id = data.get('device_id')
+    action = data.get('action')
+    
+    conn = sqlite3.connect('wma_qq_private.db')
+    cursor = conn.cursor()
+    if action == 'remove':
+        cursor.execute('SELECT google_account FROM devices WHERE device_id = ?', (dev_id,))
+        dev_row = cursor.fetchone()
+        if dev_row and dev_row[0]:
+            acc_email = dev_row[0]
+            cursor.execute('DELETE FROM users WHERE email = ?', (acc_email,))
+        cursor.execute('DELETE FROM devices WHERE device_id = ?', (dev_id,))
+    else:
+        cursor.execute('UPDATE devices SET status = ? WHERE device_id = ?', (action, dev_id))
+    conn.commit()
+    conn.close()
+    socketio.emit('device_status_update', {'device_id': dev_id})
 
 @socketio.on('join_room')
 def handle_join_room(data):
@@ -689,8 +503,7 @@ def handle_video_signal(data):
 
 @socketio.on('reset_storage')
 def handle_reset():
-    admin_mail = get_admin_email()
-    if session.get('user_email') == admin_mail:
+    if session.get('user_email') == 'officialwinmyat@gmail.com':
         conn = sqlite3.connect('wma_qq_private.db')
         cursor = conn.cursor()
         cursor.execute('DELETE FROM history')
@@ -698,30 +511,11 @@ def handle_reset():
         conn.close()
         socketio.emit('storage_reset')
 
-@socketio.on('admin_sell_presents')
-def handle_admin_sell_presents(data):
-    user_email = data.get('email')
-    rose = int(data.get('rose', 0))
-    orchid = int(data.get('orchid', 0))
-    jasmine = int(data.get('jasmine', 0))
-    
-    conn = sqlite3.connect('wma_qq_private.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT rose_bought, orchid_bought, jasmine_bought FROM users WHERE email = ?', (user_email,))
-    row = cursor.fetchone()
-    if row:
-        new_rose = row[0] + rose
-        new_orchid = row[1] + orchid
-        new_jasmine = row[2] + jasmine
-        cursor.execute('UPDATE users SET rose_bought = ?, orchid_bought = ?, jasmine_bought = ? WHERE email = ?', (new_rose, new_orchid, new_jasmine, user_email))
-        conn.commit()
-    conn.close()
-    socketio.emit('presents_sold_success', {'email': user_email, 'rose_bought': new_rose if row else rose, 'orchid_bought': new_orchid if row else orchid, 'jasmine_bought': new_jasmine if row else jasmine})
-
-HTML_PAGE = """<!DOCTYPE html>
+HTML_PAGE = """
+<!DOCTYPE html>
 <html>
 <head>
-    <title>WeMeet - Private & Group Anime Chat Hub</title>
+    <title>WMA QQ - Private & Group Anime Chat Hub</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#ec4899">
@@ -729,14 +523,13 @@ HTML_PAGE = """<!DOCTYPE html>
     <style>
         :root {
             --bg-color: #0f172a;
-            --panel-bg: rgba(20, 24, 33, 0.65);
+            --panel-bg: rgba(20, 24, 33, 0.88);
             --text-color: #f8fafc;
             --accent-color: #ec4899;
-            --chat-bg: rgba(10, 14, 23, 0.55);
-            --stream-bg: rgba(20, 24, 33, 0.55);
+            --chat-bg: rgba(10, 14, 23, 0.85);
+            --stream-bg: rgba(20, 24, 33, 0.85);
             --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80');
-            --char-left-image: none;
-            --char-right-image: none;
+            --char-fg-image: none;
         }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -751,104 +544,121 @@ HTML_PAGE = """<!DOCTYPE html>
         body::before {
             content: "";
             position: fixed;
-            bottom: 0; left: 10px; width: 280px; height: 85vh;
-            background-image: var(--char-left-image);
-            background-repeat: no-repeat;
-            background-size: contain; background-position: bottom left;
-            opacity: 0.95; pointer-events: none; z-index: 1;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background-image: var(--char-fg-image);
+            background-size: cover; background-position: center;
+            opacity: 0.15;
+            pointer-events: none;
+            z-index: 1;
         }
-        body::after {
-            content: "";
-            position: fixed;
-            bottom: 0; right: 10px; width: 320px; height: 85vh;
-            background-image: var(--char-right-image);
-            background-repeat: no-repeat;
-            background-size: contain; background-position: bottom right;
-            opacity: 0.95; pointer-events: none; z-index: 1;
+        .left-pane, .right-pane {
+            position: relative;
+            z-index: 2;
         }
-        .left-pane, .right-pane { position: relative; z-index: 2; }
         .left-pane {
             width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box;
             background: var(--panel-bg); border-right: 3px solid var(--accent-color);
-            backdrop-filter: blur(16px); transition: all 0.3s ease;
+            backdrop-filter: blur(12px);
+            transition: all 0.3s ease;
         }
         .right-pane {
             width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box;
-            background: var(--stream-bg); backdrop-filter: blur(16px);
-            border-left: 3px solid var(--accent-color); transition: all 0.3s ease;
-        }
-        @media (max-width: 768px) {
-            body { flex-direction: column; height: 100vh; overflow-y: auto; }
-            body::before, body::after { display: none; }
-            .right-pane { order: 1; width: 100%; height: 55vh; border-right: none; border-bottom: 3px solid var(--accent-color); }
-            .left-pane { order: 2; width: 100%; height: 45vh; overflow-y: auto; border-left: none; }
+            background: var(--stream-bg); backdrop-filter: blur(12px);
+            border-left: 3px solid var(--accent-color);
+            transition: all 0.3s ease;
         }
         .card {
-            background: rgba(255,255,255,0.04); padding: 15px; border-radius: 10px; margin-bottom: 15px;
-            border: 2px solid var(--accent-color); backdrop-filter: blur(10px);
-            box-shadow: 0 0 15px color-mix(in srgb, var(--accent-color) 25%, transparent);
+            background: rgba(255,255,255,0.08); padding: 15px; border-radius: 10px; margin-bottom: 15px;
+            border: 2px solid var(--accent-color); backdrop-filter: blur(8px);
+            box-shadow: 0 0 15px color-mix(in srgb, var(--accent-color) 35%, transparent);
+            transition: all 0.3s ease;
         }
         input, textarea, select, button {
             width: 100%; padding: 10px; margin: 8px 0; border-radius: 6px;
-            border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.7);
+            border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.92);
             color: white; box-sizing: border-box; outline: none; transition: all 0.3s ease;
-            backdrop-filter: blur(6px);
         }
-        input:focus, textarea:focus, select:focus { box-shadow: 0 0 10px var(--accent-color); background: rgba(15, 23, 42, 0.85); }
-        button { background: var(--accent-color); cursor: pointer; font-weight: bold; border: 2px solid #fff; transition: 0.2s; }
+        input:focus, textarea:focus, select:focus {
+            box-shadow: 0 0 10px var(--accent-color);
+        }
+        button {
+            background: var(--accent-color); cursor: pointer; font-weight: bold; border: 2px solid #fff; transition: 0.2s;
+        }
         button:hover { opacity: 0.9; transform: scale(1.02); box-shadow: 0 0 12px var(--accent-color); }
         #historyStream {
             flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color);
-            border-radius: 10px; padding: 12px; box-sizing: border-box; backdrop-filter: blur(10px); margin-top: 10px;
-            box-shadow: inset 0 0 15px color-mix(in srgb, var(--accent-color) 15%, transparent);
+            border-radius: 10px; padding: 12px; box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 10px;
+            box-shadow: inset 0 0 15px color-mix(in srgb, var(--accent-color) 20%, transparent);
+            -webkit-overflow-scrolling: touch;
         }
         .history-item {
-            padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.05);
+            padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.08);
             border-left: 6px solid var(--accent-color); border-radius: 8px; font-size: 13px; word-break: break-all; position: relative;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2); backdrop-filter: blur(6px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3); transition: all 0.3s ease;
         }
         .msg-actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
         .msg-actions button { padding: 4px 10px; font-size: 11px; width: auto; margin: 0; border-radius: 4px; background: var(--accent-color); border: 1px solid #fff; }
+        
         .user-name-tag { color: var(--accent-color); cursor: pointer; text-decoration: underline; font-weight: bold; position: relative; display: inline-block; }
         .user-name-tag:hover { color: #fff; }
-        .online-dot { display: inline-block; width: 9px; height: 9px; background-color: #22c55e; border-radius: 50%; margin-left: 5px; box-shadow: 0 0 6px #22c55e; vertical-align: middle; }
-        .offline-dot { display: inline-block; width: 9px; height: 9px; background-color: #64748b; border-radius: 50%; margin-left: 5px; vertical-align: middle; }
-        #topNotificationBanner {
-            display: none; position: absolute; top: 10px; left: 10px; z-index: 1001;
-            background: rgba(236, 72, 153, 0.95); color: white; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; border: 1px solid #fff;
+        
+        .online-dot {
+            display: inline-block;
+            width: 9px;
+            height: 9px;
+            background-color: #22c55e;
+            border-radius: 50%;
+            margin-left: 5px;
+            box-shadow: 0 0 6px #22c55e;
+            vertical-align: middle;
         }
-        #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none; }
-        #goToMainChatBtn { display: none; margin-bottom: 10px; background: #2563eb; color: white; font-weight: bold; border: 2px solid #fff; padding: 8px; border-radius: 6px; cursor: pointer; text-align: center; }
-        #floatingLiveChat, #floatingPresentBuyChat, #floatingPresentRedeemChat {
-            display: none; position: fixed; bottom: 20px; right: 20px; width: 320px; max-height: 400px; background: rgba(20, 24, 33, 0.85);
-            border: 3px solid var(--accent-color); border-radius: 10px; z-index: 10005; padding: 12px; box-shadow: 0 0 20px var(--accent-color); flex-direction: column;
-            backdrop-filter: blur(14px);
+        
+        #topNotificationBanner {
+            display: none;
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1001;
+            background: rgba(236, 72, 153, 0.95);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: bold;
+            box-shadow: 0 0 10px var(--accent-color);
+            border: 1px solid #fff;
+        }
+
+        #resetBtn {
+            position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white;
+            padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none;
+        }
+        #goToMainChatBtn {
+            display: none; margin-bottom: 10px; background: #2563eb; color: white; font-weight: bold; border: 2px solid #fff; padding: 8px; border-radius: 6px; cursor: pointer; text-align: center;
         }
         #videoPopup {
             display: none; position: fixed; top: 10%; left: 15%; width: 70%;
-            background: rgba(20, 24, 33, 0.9); border: 3px solid var(--accent-color); border-radius: 12px;
+            background: rgba(20, 24, 33, 0.98); border: 3px solid var(--accent-color); border-radius: 12px;
             padding: 20px; z-index: 1000; box-shadow: 0 0 35px var(--accent-color); text-align: center; backdrop-filter: blur(18px);
         }
         .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; max-height: 380px; overflow-y: auto; margin: 15px 0; }
-        .video-box { background: rgba(0,0,0,0.5); border: 2px solid var(--accent-color); border-radius: 8px; padding: 5px; }
+        .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 8px; padding: 5px; }
         video { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; background: #000; }
-        .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.15); }
+        .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
         #appContainer { display: none; width: 100%; height: 100vh; }
         #authOverlay, #verifyOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100vh;
-            background: rgba(10, 14, 23, 0.9); z-index: 9999; display: flex; flex-direction: column;
+            background: rgba(10, 14, 23, 0.96); z-index: 9999; display: flex; flex-direction: column;
             justify-content: center; align-items: center; text-align: center; padding: 20px;
-            backdrop-filter: blur(16px);
         }
         #verifyOverlay { display: none; }
         .chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 2px solid var(--accent-color); display: block; }
         .admin-login-box { border-color: #f59e0b !important; }
-        .admin-section-title { font-weight: bold; color: #f59e0b; margin: 10px 0 5px 0; border-bottom: 1px solid #f59e0b; padding-bottom: 3px; }
     </style>
 </head>
 <body>
     <div id="authOverlay">
-        <h2 style="color: var(--accent-color); text-shadow: 0 0 10px var(--accent-color);">WeMeet - Private & Group Anime Hub</h2>
+        <h2 style="color: var(--accent-color); text-shadow: 0 0 10px var(--accent-color);">WMA QQ - Private & Group Anime Hub</h2>
         <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password (သို့မဟုတ် Admin Master Key) ဖြင့် ဝင်ရောက်ပါ</p>
         
         <div style="display: flex; gap: 10px; margin-bottom: 15px; width: 320px; justify-content: center;">
@@ -856,8 +666,7 @@ HTML_PAGE = """<!DOCTYPE html>
             <button onclick="switchAuthTab('admin')" id="adminTabBtn" style="background: #475569; padding: 6px; font-size:12px;">Admin Master Login</button>
         </div>
 
-        <div id="userAuthBox" style="background: rgba(255,255,255,0.04); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px; box-shadow: 0 0 20px var(--accent-color); backdrop-filter: blur(10px);">
-            <input type="text" id="signupUsername" placeholder="User Name (max 15 letters)" maxlength="15">
+        <div id="userAuthBox" style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 320px; box-shadow: 0 0 20px var(--accent-color);">
             <input type="email" id="loginEmail" placeholder="Email (e.g. user@gmail.com)">
             <input type="password" id="loginPassword" placeholder="Password">
             <div style="text-align: left; font-size: 12px; color: #cbd5e1; margin: 5px 0;">
@@ -872,10 +681,10 @@ HTML_PAGE = """<!DOCTYPE html>
             <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
 
-        <div id="adminAuthBox" style="display: none; background: rgba(255,255,255,0.04); padding: 20px; border-radius: 10px; border: 2px solid #f59e0b; width: 320px; box-shadow: 0 0 20px #f59e0b; backdrop-filter: blur(10px);" class="admin-login-box">
-            <input type="email" id="adminEmailInput" placeholder="Admin Email (Manual Entry)">
+        <div id="adminAuthBox" style="display: none; background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid #f59e0b; width: 320px; box-shadow: 0 0 20px #f59e0b;" class="admin-login-box">
+            <input type="email" id="adminEmailInput" value="officialwinmyat@gmail.com" readonly style="background:#334155;">
             <input type="password" id="adminPasswordInput" placeholder="Admin Password">
-            <input type="password" id="adminMasterKeyInput" placeholder="Universal Code (Master Key)">
+            <input type="password" id="adminMasterKeyInput" placeholder="Universal Code (Master Key 6 digits)">
             <button onclick="loginAdminWithMasterKey()" style="background: #f59e0b; margin-top: 10px;">Admin Sign In</button>
             <div id="adminLoginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
@@ -884,76 +693,32 @@ HTML_PAGE = """<!DOCTYPE html>
     <div id="verifyOverlay">
         <h2 style="color: var(--accent-color);">Email & Verification Code Required</h2>
         <p style="max-width: 400px; color: #cbd5e1; margin: 15px 0;">
-            Verification code ထည့်သွင်းရန် Admin နှင့် တိုက်ရိုက်ချိတ်ဆက်ပါ။
+            15 မိနစ်အတွင်း officialwinmyat@gmail.com ထံ မှ varification code တောင်းယူပြီး ဖြည့်ပါ ၊ ဤ box အား မပိတ်လိုက်ပါနှင့် home key ဖြင့်သာ ပြန်ထွက်ပါ။
         </p>
-        <div style="background: rgba(255,255,255,0.04); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 340px; backdrop-filter: blur(10px);">
-            <input type="text" id="verificationCodeInput" placeholder="6-digit code or Master Key" maxlength="6" style="text-align:center; font-size:18px; letter-spacing:4px; font-weight:bold;">
+        <div style="background: rgba(255,255,255,0.08); padding: 20px; border-radius: 10px; border: 2px solid var(--accent-color); width: 340px;">
+            <input type="text" id="verificationCodeInput" placeholder="6-digit code" maxlength="6" style="text-align:center; font-size:18px; letter-spacing:4px; font-weight:bold;">
             <button onclick="submitVerificationCode()" style="background: var(--accent-color); margin-top: 10px;">Submit Verification Code</button>
+            <button onclick="requestVerificationAgain()" style="background: #ca8a04; margin-top: 5px; font-size: 12px;">Not get varification code from admin? request varification again</button>
+            <div style="font-size: 11px; color: #facc15; margin-top: 8px; line-height: 1.4;">
+                ကျန်ရှိသော မှားယွင်းခွင့်အကြိမ်ရေ: <span id="remainingAttempts" style="font-weight:bold;">10</span> ကြိမ်
+            </div>
             <div id="verifyError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
     </div>
 
-    <!-- Temporary Floating Live Chat Box -->
-    <div id="floatingLiveChat">
-        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--accent-color); padding-bottom:5px; margin-bottom:8px;">
-            <span id="floatingChatTitle" style="font-weight:bold; color:var(--accent-color); font-size:13px;">Live Chat Assistant</span>
-            <button onclick="closeFloatingChat()" style="background:#dc2626; width:auto; padding:2px 6px; font-size:11px; margin:0;">Close</button>
-        </div>
-        <div id="floatingChatEmailDisplay" style="font-size:11px; color:#cbd5e1; margin-bottom:5px;"></div>
-        <div id="floatingChatMessages" style="flex:1; max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; font-size:12px; margin-bottom:8px;"></div>
-        <div id="floatingChatActionArea">
-            <input type="text" id="floatingChatInput" placeholder="Message or KPay Name/No..." style="font-size:12px; padding:6px; margin:4px 0;">
-            <input type="file" id="floatingChatImageInput" style="font-size:11px; display:none;" onchange="sendFloatingImage(this)">
-            <div style="display:flex; gap:5px; margin-top:4px;">
-                <button onclick="sendFloatingTextMessage()" style="padding:6px; font-size:11px; background:var(--accent-color);">Send Text</button>
-                <button onclick="document.getElementById('floatingChatImageInput').click()" style="padding:6px; font-size:11px; background:#2563eb;">Send Image</button>
-            </div>
-            <div id="adminActionButtonsArea" style="margin-top:6px; display:none;">
-                <button onclick="adminSellPresents()" style="background:#16a34a; font-size:11px; padding:6px;">Sell Presents</button>
-                <button onclick="adminPermitRedeem()" style="background:#16a34a; font-size:11px; padding:6px;">Permitted Redeem</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Temporary Present Buy Floating Live Chat Box -->
-    <div id="floatingPresentBuyChat">
-        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--accent-color); padding-bottom:5px; margin-bottom:8px;">
-            <span id="buyChatTitle" style="font-weight:bold; color:var(--accent-color); font-size:13px;">Present Buy Chat</span>
-            <button onclick="closeBuyChat()" style="background:#dc2626; width:auto; padding:2px 6px; font-size:11px; margin:0;">Close</button>
-        </div>
-        <div id="buyChatEmailDisplay" style="font-size:11px; color:#cbd5e1; margin-bottom:5px;"></div>
-        <div id="buyChatMessages" style="flex:1; max-height:180px; overflow-y:auto; background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; font-size:12px; margin-bottom:8px;"></div>
-        <div>
-            <input type="text" id="buyChatInput" placeholder="Message / KPay info..." style="font-size:12px; padding:6px; margin:4px 0;">
-            <input type="file" id="buyChatImageInput" style="display:none;" onchange="sendBuyChatImage(this)">
-            <div style="display:flex; gap:5px; margin-top:4px;">
-                <button onclick="sendBuyChatText()" style="padding:6px; font-size:11px; background:var(--accent-color);">Send Text</button>
-                <button onclick="document.getElementById('buyChatImageInput').click()" style="padding:6px; font-size:11px; background:#2563eb;">Send Image</button>
-                <button id="adminSellButton" onclick="adminExecuteSell()" style="padding:6px; font-size:11px; background:#16a34a; display:none;">Sell Presents</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Temporary Present Redeem Floating Live Chat Box -->
-    <div id="floatingPresentRedeemChat">
-        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--accent-color); padding-bottom:5px; margin-bottom:8px;">
-            <span id="redeemChatTitle" style="font-weight:bold; color:var(--accent-color); font-size:13px;">Present Redeem Chat</span>
-            <button onclick="closeRedeemChat()" style="background:#dc2626; width:auto; padding:2px 6px; font-size:11px; margin:0;">Close</button>
-        </div>
-        <div id="redeemChatEmailDisplay" style="font-size:11px; color:#cbd5e1; margin-bottom:5px;"></div>
-        <div id="redeemChatMessages" style="flex:1; max-height:180px; overflow-y:auto; background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; font-size:12px; margin-bottom:8px;"></div>
-        <div>
-            <input type="text" id="redeemChatInput" placeholder="Message..." style="font-size:12px; padding:6px; margin:4px 0;">
-            <div style="display:flex; gap:5px; margin-top:4px;">
-                <button onclick="sendRedeemChatText()" style="padding:6px; font-size:11px; background:var(--accent-color);">Send Text</button>
-                <button id="adminPermitRedeemButton" onclick="adminExecutePermitRedeem()" style="padding:6px; font-size:11px; background:#16a34a; display:none;">Permitted Redeem</button>
-            </div>
+    <div id="robotChallengeOverlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.98); z-index:10000; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:20px;">
+        <h2 style="color:#ef4444;">Human Verification Required</h2>
+        <p style="color:#cbd5e1; max-width:400px;">Verification code ၁၀ ကြိမ် အမှားများသွားပါသဖြင့် Human လား Robot လား စစ်ဆေးခြင်း ခံယူပါ။</p>
+        <div style="background:rgba(255,255,255,0.08); padding:20px; border-radius:10px; border:2px solid #ef4444; width:300px;">
+            <div id="captchaQuestion" style="font-size:18px; font-weight:bold; margin-bottom:10px;"></div>
+            <input type="text" id="captchaAnswerInput" placeholder="အဖြေထည့်ပါ">
+            <button onclick="verifyCaptcha()" style="background:#16a34a; margin-top:10px;">Verify Human</button>
         </div>
     </div>
 
     <div id="appContainer">
         <div id="videoPopup">
-            <h3>WeMeet - Anime Video Conference</h3>
+            <h3>WMA QQ - Anime Video Conference</h3>
             <div id="callerInfo" style="margin-bottom: 10px; font-weight: bold; color: var(--accent-color);"></div>
             <div class="video-grid" id="videoGridContainer">
                 <div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>
@@ -971,7 +736,7 @@ HTML_PAGE = """<!DOCTYPE html>
             <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
             
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
-                <h3 id="currentChatRoomTitle" style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color); margin: 0 0 10px 0;">WeMeet - Main Group Chat</h3>
+                <h3 id="currentChatRoomTitle" style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color); margin: 0 0 10px 0;">WMA QQ - Main Group Chat</h3>
                 <button id="goToMainChatBtn" onclick="switchToMainChat()">Go to Main Chat Room</button>
             </div>
 
@@ -985,10 +750,10 @@ HTML_PAGE = """<!DOCTYPE html>
         </div>
 
         <div class="left-pane">
-            <h2 style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color);">WeMeet Control Panel</h2>
+            <h2 style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color);">WMA QQ Control Panel</h2>
             <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">
-                <div id="userHeaderTag" onclick="openUserProfileModal()" class="user-name-tag" style="font-size:15px; font-weight:bold; margin-bottom:5px;"></div>
-                သက်တမ်း: <span id="currentUserDurationDisplay" style="color:#facc15; font-weight:bold;">3 months</span>
+                Logged in as: <b id="currentLoggedInName" style="color:var(--accent-color);"></b> 
+                | သက်တမ်း: <span id="currentUserDurationDisplay" style="color:#facc15; font-weight:bold;">3 months</span>
                 <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button>
             </div>
             
@@ -997,29 +762,15 @@ HTML_PAGE = """<!DOCTYPE html>
                 <div id="onlineUsersListContainer" style="max-height: 120px; overflow-y: auto; font-size: 12px; color: #cbd5e1;"></div>
             </div>
 
-            <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
-                <h4 style="color: #f59e0b;">👑 Admin Control Panel</h4>
-                <div class="admin-section-title">🎁 Admin Gift Box Prices Setup</div>
-                <div style="display:flex; gap:5px; align-items:center; font-size:12px;">
-                    <span>Rose:</span><input type="number" id="adminRosePrice" value="1000" style="width:60px; padding:4px;">
-                    <span>Orchid:</span><input type="number" id="adminOrchidPrice" value="3000" style="width:60px; padding:4px;">
-                    <span>Jasmine:</span><input type="number" id="adminJasminePrice" value="5000" style="width:60px; padding:4px;">
-                    <button onclick="saveAdminPrices()" style="width:auto; padding:4px 8px; background:#f59e0b;">Save</button>
-                </div>
-                
-                <div class="admin-section-title">⏱️ Sign up လုပ်နေဆဲ စာရင်း</div>
-                <div id="adminPendingSignupsContainer" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color); margin-bottom: 10px;"></div>
-
-                <div class="admin-section-title">✅ Sign up လုပ်ပြီးစာရင်း</div>
-                <div id="adminVerifiedSignupsContainer" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color); margin-bottom: 10px;"></div>
-
-                <div class="admin-section-title">⛔ Ban ထားသော စာရင်း</div>
-                <div id="adminBannedSignupsContainer" style="max-height: 150px; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; border: 1px solid #dc2626;"></div>
+            <div class="card">
+                <h4 style="color: var(--accent-color);">Dynamic Anime Themes</h4>
+                <button onclick="autoGenerateAnimeTheme()">Randomize Anime Character Theme</button>
             </div>
 
-            <div class="card">
-                <h4 style="color: var(--accent-color);">👤 My Profile & Gifts</h4>
-                <button onclick="openUserProfileModal()" style="background:var(--accent-color);">Edit Profile & Manage Gifts / Redeem</button>
+            <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
+                <h4 style="color: #f59e0b;">👑 Admin Control Panel (Recent 15 Mins Signups)</h4>
+                <div style="font-size: 11px; color: #cbd5e1; margin-bottom: 8px;">လတ်တလော ၁၅ မိနစ်အတွင်း sign up နှိပ်ထားသော user များ:</div>
+                <div id="adminRecentSignupsContainer" style="max-height: 240px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
             </div>
 
             <div class="card">
@@ -1042,101 +793,10 @@ HTML_PAGE = """<!DOCTYPE html>
             </div>
 
             <div class="card">
-                <h4 style="color: var(--accent-color);">Function 4: Original File or Image (Max 50MB)</h4>
+                <h4 style="color: var(--accent-color);">Function 4: Original File or Image (48h Auto-Delete)</h4>
                 <input type="file" id="fileInput" onchange="handleFileSelected(this)">
                 <button id="sendFileBtn" onclick="sendFile()" disabled style="opacity: 0.5;">Send File / Image</button>
             </div>
-        </div>
-    </div>
-
-    <!-- User Profile Modal -->
-    <div id="userProfileModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.9); z-index:10002; overflow-y:auto; padding:20px; box-sizing:border-box; backdrop-filter:blur(16px);">
-        <div style="max-width:600px; margin:30px auto; background:rgba(20,24,33,0.95); border:3px solid var(--accent-color); border-radius:12px; padding:20px; backdrop-filter:blur(18px);">
-            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--accent-color); padding-bottom:10px; margin-bottom:15px;">
-                <h3 style="color:var(--accent-color); margin:0;">User Profile & Gifts Dashboard</h3>
-                <button onclick="closeUserProfileModal()" style="background:#dc2626; width:auto; padding:4px 10px; font-size:12px;">Close</button>
-            </div>
-            
-            <div style="font-size:13px; margin-bottom:10px;">
-                <label>Username (max 15 letters):</label>
-                <div style="display:flex; gap:5px;">
-                    <input type="text" id="modalUsername" maxlength="15" placeholder="Enter username">
-                    <button onclick="saveUsername()" style="width:auto; padding:4px 8px; font-size:11px; background:var(--accent-color);">Save</button>
-                </div>
-                <div id="usernameWarning" style="color:#f87171; font-size:11px;"></div>
-            </div>
-
-            <div style="font-size:13px; margin-bottom:10px;">
-                <label>Age (18 to 90): အသက် 18 နှစ်အောက် မသုံးရပါ</label>
-                <div style="display:flex; gap:5px;">
-                    <input type="number" id="modalAge" min="18" max="90" placeholder="Age" onchange="checkAgeAndSexFields()">
-                    <button onclick="saveAge()" style="width:auto; padding:4px 8px; font-size:11px; background:var(--accent-color);">Save</button>
-                </div>
-            </div>
-
-            <div style="font-size:13px; margin-bottom:10px;">
-                <label>Sex:</label>
-                <div style="display:flex; gap:5px;">
-                    <select id="modalSex" disabled><option value="">Select Sex</option></select>
-                    <button onclick="saveSex()" style="width:auto; padding:4px 8px; font-size:11px; background:var(--accent-color);">Save</button>
-                </div>
-            </div>
-
-            <div style="font-size:13px; margin-bottom:10px;">
-                <label>Location (Country -> Province/State -> City):</label>
-                <div style="display:flex; gap:5px;">
-                    <select id="modalCountry" onchange="updateProvinces()"><option value="">Select Country</option><option value="Myanmar">Myanmar</option><option value="Thailand">Thailand</option><option value="Singapore">Singapore</option></select>
-                    <select id="modalProvince" onchange="updateCities()"><option value="">Select Province/State</option></select>
-                    <select id="modalCity"><option value="">Select City</option></select>
-                </div>
-                <button onclick="saveLocation()" style="width:auto; padding:4px 8px; font-size:11px; background:var(--accent-color); margin-top:5px;">Save Location</button>
-            </div>
-
-            <div style="font-size:13px; margin-bottom:15px;">
-                <label>Pictures (Max 5 photos, < 15MB each):</label>
-                <div id="profilePicturesContainer" style="display:flex; gap:10px; flex-wrap:wrap; margin-top:5px;"></div>
-            </div>
-
-            <div class="card" style="background:rgba(0,0,0,0.3);">
-                <h4 style="color:var(--accent-color); margin-top:0;">🎁 Gifts Management</h4>
-                <div style="display:flex; gap:10px; margin-bottom:10px;">
-                    <button onclick="openGiftBuyModal()" style="background:#16a34a; font-size:12px; padding:6px 12px; width:auto;">လက်ဆောင် ဝယ်ယူရန်</button>
-                    <button onclick="openRedeemModal()" style="background:#ca8a04; font-size:12px; padding:6px 12px; width:auto;">လက်ဆောင်များ ထုတ်ယူရန် (Redeem)</button>
-                </div>
-                <div style="font-size:12px;" id="userGiftsSummaryDisplay"></div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Gift Buy Modal -->
-    <div id="giftBuyModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.9); z-index:10003; padding:20px; box-sizing:border-box; overflow-y:auto; backdrop-filter:blur(16px);">
-        <div style="max-width:450px; margin:40px auto; background:rgba(20,24,33,0.95); border:3px solid var(--accent-color); border-radius:12px; padding:20px; backdrop-filter:blur(18px);">
-            <h3 style="color:var(--accent-color); margin-top:0;">လက်ဆောင် ဝယ်ယူရန် (Gift Purchase)</h3>
-            <div style="font-size:13px; margin-bottom:10px;">
-                <label>Rose box (Qty):</label><input type="number" id="buyRoseQty" value="0" min="0">
-                <label>Orchid box (Qty):</label><input type="number" id="buyOrchidQty" value="0" min="0">
-                <label>Jasmine box (Qty):</label><input type="number" id="buyJasmineQty" value="0" min="0">
-            </div>
-            <button onclick="submitGiftPurchaseRequest()" style="background:#16a34a;">Submit Purchase Request</button>
-            <button onclick="closeGiftBuyModal()" style="background:#dc2626; margin-top:5px;">Close</button>
-        </div>
-    </div>
-
-    <!-- Redeem Modal -->
-    <div id="redeemModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.9); z-index:10003; padding:20px; box-sizing:border-box; overflow-y:auto; backdrop-filter:blur(16px);">
-        <div style="max-width:450px; margin:40px auto; background:rgba(20,24,33,0.95); border:3px solid var(--accent-color); border-radius:12px; padding:20px; backdrop-filter:blur(18px);">
-            <h3 style="color:var(--accent-color); margin-top:0;">လက်ဆောင်များ ထုတ်ယူရန် (Redeem)</h3>
-            <div style="font-size:13px; margin-bottom:10px;" id="redeemSelectionArea">
-                <label>Rose Qty to Redeem:</label><input type="number" id="redeemRoseQty" value="0" min="0">
-                <label>Orchid Qty to Redeem:</label><input type="number" id="redeemOrchidQty" value="0" min="0">
-                <label>Jasmine Qty to Redeem:</label><input type="number" id="redeemJasmineQty" value="0" min="0">
-            </div>
-            <div style="font-size:13px; margin-bottom:10px;">
-                <input type="text" id="redeemKpayName" placeholder="KPay Account Name">
-                <input type="text" id="redeemKpayNumber" placeholder="KPay Account Number">
-            </div>
-            <button onclick="submitRedeemRequest()" style="background:#ca8a04;">Submit Redeem Request</button>
-            <button onclick="closeRedeemModal()" style="background:#dc2626; margin-top:5px;">Close</button>
         </div>
     </div>
 
@@ -1146,13 +806,18 @@ HTML_PAGE = """<!DOCTYPE html>
         let mediaRecorder;
         let audioChunks = [];
         let localStream = null;
+        let peerConnections = {};
         let selectedFileBase64 = null;
         let selectedFileName = '';
         let isSpeakerMuted = false;
         let isCameraMuted = false;
         let wakeLock = null;
+        let activeDevicesCache = [];
+        let knownPrivateRooms = new Set();
+        let notificationTimeout = null;
         let pendingVerificationEmail = '';
-        let currentUserProfileData = null;
+        let wrongVerificationAttempts = 0;
+        const maxWrongAttempts = 10;
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
@@ -1160,11 +825,16 @@ HTML_PAGE = """<!DOCTYPE html>
             });
         }
 
-        setInterval(() => { fetch('/ping').catch(e => {}); }, 300000);
+        setInterval(() => {
+            fetch('/ping').catch(e => {});
+        }, 300000);
+
         setInterval(() => {
             const isAdmin = localStorage.getItem('wma_is_admin') === 'true';
-            if (isAdmin) { fetchAdminAllLists(); }
-        }, 8000);
+            if (isAdmin) {
+                fetchRecentSignupsForAdmin();
+            }
+        }, 5000);
 
         async function requestWakeLock() {
             try {
@@ -1181,6 +851,35 @@ HTML_PAGE = """<!DOCTYPE html>
         }
 
         const servers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
+
+        const animeThemes = [
+            { name: "Naruto Uzumaki", bg: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", char: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", accent: "#f97316" },
+            { name: "Gojo Satoru", bg: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=1920&q=80", char: "https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=1920&q=80", accent: "#3b82f6" },
+            { name: "Wei Wuxian (MDZS)", bg: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80", char: "https://images.unsplash.com/photo-1563089145-599997674d42?auto=format&fit=crop&w=1920&q=80", accent: "#a855f7" },
+            { name: "Nezuko Kamado", bg: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80", char: "https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80", accent: "#ec4899" }
+        ];
+
+        function autoGenerateAnimeTheme() {
+            const theme = animeThemes[Math.floor(Math.random() * animeThemes.length)];
+            document.documentElement.style.setProperty('--accent-color', theme.accent);
+            document.documentElement.style.setProperty('--bg-image', `url('${theme.bg}')`);
+            document.documentElement.style.setProperty('--char-fg-image', `url('${theme.char}')`);
+            localStorage.setItem('wma_current_theme', JSON.stringify(theme));
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedTheme = localStorage.getItem('wma_current_theme');
+            if (savedTheme) {
+                try {
+                    const theme = JSON.parse(savedTheme);
+                    document.documentElement.style.setProperty('--accent-color', theme.accent);
+                    document.documentElement.style.setProperty('--bg-image', `url('${theme.bg}')`);
+                    if(theme.char) {
+                        document.documentElement.style.setProperty('--char-fg-image', `url('${theme.char}')`);
+                    }
+                } catch(e) {}
+            }
+        });
 
         function switchAuthTab(tab) {
             if (tab === 'user') {
@@ -1205,7 +904,7 @@ HTML_PAGE = """<!DOCTYPE html>
         function getDeviceId() {
             let devId = localStorage.getItem('wma_device_id');
             if (!devId) {
-                devId = 'device_mfg_' + Math.random().toString(36).substring(2, 15);
+                devId = 'device_gen_' + Math.random().toString(36).substring(2, 15);
                 localStorage.setItem('wma_device_id', devId);
             }
             return devId;
@@ -1261,52 +960,15 @@ HTML_PAGE = """<!DOCTYPE html>
             document.getElementById('verifyOverlay').style.display = 'none';
             document.getElementById('appContainer').style.display = 'flex';
             const devId = getDeviceId();
-            
-            fetchUserProfileData(() => {
-                let dName = currentUserProfileData && currentUserProfileData.username ? currentUserProfileData.username : getUserDisplayName(email, devId);
-                let titlePrefix = calculateUserTitlePrefix(currentUserProfileData);
-                document.getElementById('userHeaderTag').innerText = `${titlePrefix} ${dName}`;
-                document.getElementById('currentUserDurationDisplay').innerText = duration || '3 months';
-                if (isAdmin) {
-                    document.getElementById('adminControlCard').style.display = 'block';
-                    document.getElementById('resetBtn').style.display = 'block';
-                    fetchAdminAllLists();
-                }
-                registerDeviceWithServer(email);
-                loadChatHistory(currentRoom);
-            });
-        }
-
-        function fetchUserProfileData(callback) {
-            fetch('/get_user_profile')
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    currentUserProfileData = data;
-                    if (data.username) {
-                        let email = localStorage.getItem('wma_remember_email') || '';
-                        localStorage.setItem('wma_custom_username_' + email, data.username);
-                    }
-                }
-                if (callback) callback();
-            });
-        }
-
-        function calculateUserTitlePrefix(profile) {
-            if (!profile) return '';
-            let totalVal = (profile.rose_received || 0) * 1000 + (profile.orchid_received || 0) * 3000 + (profile.jasmine_received || 0) * 5000;
-            let sex = (profile.sex || '').toLowerCase();
-            let isMale = sex === 'boy' || sex === 'male';
-            let isFemale = sex === 'girl' || sex === 'female';
-
-            if (totalVal >= 10000000) {
-                return isMale ? 'Empire' : (isFemale ? 'Empress' : 'Empire/Empress');
-            } else if (totalVal >= 5000000) {
-                return isMale ? 'King' : (isFemale ? 'Queen' : 'King/Queen');
-            } else if (totalVal >= 100000) {
-                return isMale ? 'Prince' : (isFemale ? 'Princess' : 'Prince/Princess');
+            document.getElementById('currentLoggedInName').innerText = getUserDisplayName(email, devId);
+            document.getElementById('currentUserDurationDisplay').innerText = duration || '3 months';
+            if (isAdmin) {
+                document.getElementById('adminControlCard').style.display = 'block';
+                document.getElementById('resetBtn').style.display = 'block';
+                fetchRecentSignupsForAdmin();
             }
-            return 'ordinary user';
+            registerDeviceWithServer(email);
+            loadChatHistory(currentRoom);
         }
 
         function loginAdminWithMasterKey() {
@@ -1360,60 +1022,34 @@ HTML_PAGE = """<!DOCTYPE html>
         function signupUser() {
             const email = document.getElementById('loginEmail').value.trim().toLowerCase();
             const password = document.getElementById('loginPassword').value;
-            const username = document.getElementById('signupUsername').value.trim();
             const devId = getDeviceId();
 
-            if (!email || !password || !username) {
-                document.getElementById('loginError').innerText = "Username, Email နှင့် Password ထည့်ရန် လိုအပ်ပါသည်။";
-                return;
-            }
-            if (username.length > 15) {
-                document.getElementById('loginError').innerText = "User name မှာ 15 letter ထိသာ ရေးလို့ ရပါသည်။";
+            if (!email || !password) {
+                document.getElementById('loginError').innerText = "Email နှင့် Password ထည့်ရန် လိုအပ်ပါသည်။";
                 return;
             }
 
             fetch('/signup', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({email, password, device_id: devId, username})
+                body: JSON.stringify({email, password, device_id: devId})
             })
             .then(res => res.json())
             .then(data => {
-                if (data.success) {
-                    if (data.requires_verification) {
-                        pendingVerificationEmail = email;
-                        document.getElementById('authOverlay').style.display = 'none';
-                        document.getElementById('verifyOverlay').style.display = 'flex';
-                        openFloatingLiveChatForVerification(email);
-                    } else {
-                        localStorage.setItem('wma_is_admin', data.is_admin);
-                        location.reload();
-                    }
+                if (data.success && data.requires_verification) {
+                    pendingVerificationEmail = email;
+                    wrongVerificationAttempts = 0;
+                    document.getElementById('remainingAttempts').innerText = maxWrongAttempts - wrongVerificationAttempts;
+                    document.getElementById('authOverlay').style.display = 'none';
+                    document.getElementById('verifyOverlay').style.display = 'flex';
                 } else {
                     document.getElementById('loginError').innerText = data.error || "Signup error";
                 }
             });
         }
 
-        function openFloatingLiveChatForVerification(email) {
-            const chatBox = document.getElementById('floatingLiveChat');
-            chatBox.style.display = 'flex';
-            document.getElementById('floatingChatTitle').innerText = 'Verification Live Chat with Admin';
-            document.getElementById('floatingChatEmailDisplay').innerText = `User Email: ${email}`;
-            document.getElementById('floatingChatMessages').innerHTML = `<div><b>System:</b> Sign up လုပ်ထားသော Email (${email}) အတွက် verification code ကို Admin ဆီမှ တိုက်ရိုက်တောင်းဆိုပါ။ Admin က code ပို့ပေးပါလိမ့်မည်။</div>`;
-            document.getElementById('adminActionButtonsArea').style.display = 'none';
-        }
-
-        function closeFloatingChat() {
-            document.getElementById('floatingLiveChat').style.display = 'none';
-        }
-
-        function closeBuyChat() {
-            document.getElementById('floatingPresentBuyChat').style.display = 'none';
-        }
-
-        function closeRedeemChat() {
-            document.getElementById('floatingPresentRedeemChat').style.display = 'none';
+        function requestVerificationAgain() {
+            alert("အကြောင်းကြားပြီးပါပြီ။ admin ထံမှ verification code ကို ထပ်မံတောင်းယူပါ။");
         }
 
         function submitVerificationCode() {
@@ -1430,186 +1066,83 @@ HTML_PAGE = """<!DOCTYPE html>
             .then(data => {
                 if (data.success) {
                     localStorage.setItem('wma_is_admin', data.is_admin);
-                    closeFloatingChat();
                     location.reload();
                 } else {
-                    document.getElementById('verifyError').innerText = data.error;
+                    wrongVerificationAttempts++;
+                    let remaining = maxWrongAttempts - wrongVerificationAttempts;
+                    document.getElementById('remainingAttempts').innerText = remaining;
+                    
+                    if (wrongVerificationAttempts >= maxWrongAttempts) {
+                        document.getElementById('verifyOverlay').style.display = 'none';
+                        triggerRobotChallenge();
+                    } else {
+                        document.getElementById('verifyError').innerText = data.error;
+                    }
                 }
             });
         }
 
-        function sendFloatingTextMessage() {
-            const input = document.getElementById('floatingChatInput');
-            const msg = input.value.trim();
-            if (!msg) return;
-            const container = document.getElementById('floatingChatMessages');
-            container.innerHTML += `<div><b>You:</b> ${msg}</div>`;
-            input.value = '';
-            container.scrollTop = container.scrollHeight;
+        let currentCaptchaAnswer = 0;
+        function triggerRobotChallenge() {
+            const num1 = Math.floor(Math.random() * 10) + 1;
+            const num2 = Math.floor(Math.random() * 10) + 1;
+            currentCaptchaAnswer = num1 + num2;
+            document.getElementById('captchaQuestion').innerText = `${num1} + ${num2} = ?`;
+            document.getElementById('robotChallengeOverlay').style.display = 'flex';
         }
 
-        function sendFloatingImage(inputElem) {
-            if (inputElem.files && inputElem.files[0]) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const container = document.getElementById('floatingChatMessages');
-                    container.innerHTML += `<div><b>You [Image]:</b><br><img src="${e.target.result}" style="max-width:150px; border-radius:4px;"></div>`;
-                    container.scrollTop = container.scrollHeight;
-                };
-                reader.readAsDataURL(inputElem.files[0]);
+        function verifyCaptcha() {
+            const val = parseInt(document.getElementById('captchaAnswerInput').value);
+            if (val === currentCaptchaAnswer) {
+                alert("Human verificationအောင်မြင်ပါသည်။ Verification code ကို ထပ်မံတောင်းခံနိုင်ပါပြီ။");
+                document.getElementById('robotChallengeOverlay').style.display = 'none';
+                wrongVerificationAttempts = 0;
+                document.getElementById('remainingAttempts').innerText = maxWrongAttempts;
+                document.getElementById('verifyOverlay').style.display = 'flex';
+            } else {
+                alert("အဖြေမှားယွင်းနေပါသည်။ ထပ်ကြိုးစားပါ။");
             }
         }
 
-        function sendBuyChatText() {
-            const input = document.getElementById('buyChatInput');
-            const msg = input.value.trim();
-            if (!msg) return;
-            const container = document.getElementById('buyChatMessages');
-            container.innerHTML += `<div><b>You:</b> ${msg}</div>`;
-            input.value = '';
-            container.scrollTop = container.scrollHeight;
-        }
-
-        function sendBuyChatImage(inputElem) {
-            if (inputElem.files && inputElem.files[0]) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const container = document.getElementById('buyChatMessages');
-                    container.innerHTML += `<div><b>You [Screenshot]:</b><br><img src="${e.target.result}" style="max-width:150px; border-radius:4px;"></div>`;
-                    container.scrollTop = container.scrollHeight;
-                };
-                reader.readAsDataURL(inputElem.files[0]);
-            }
-        }
-
-        function sendRedeemChatText() {
-            const input = document.getElementById('redeemChatInput');
-            const msg = input.value.trim();
-            if (!msg) return;
-            const container = document.getElementById('redeemChatMessages');
-            container.innerHTML += `<div><b>You:</b> ${msg}</div>`;
-            input.value = '';
-            container.scrollTop = container.scrollHeight;
-        }
-
-        function fetchAdminAllLists() {
-            fetch('/get_admin_all_lists')
+        function fetchRecentSignupsForAdmin() {
+            fetch('/get_recent_signups')
             .then(res => res.json())
-            .then(data => {
-                renderPendingList(data.pending);
-                renderVerifiedList(data.verified);
-                renderBannedList(data.banned);
-            });
-        }
-
-        function renderPendingList(signups) {
-            const container = document.getElementById('adminPendingSignupsContainer');
-            if (!container) return;
-            container.innerHTML = '';
-            if (signups.length === 0) {
-                container.innerHTML = '<i>Sign up လုပ်နေဆဲ user မရှိပါ။</i>';
-                return;
-            }
-            signups.forEach(s => {
-                let key = s.email.replace(/[@.]/g, '_');
-                let div = document.createElement('div');
-                div.className = 'device-row';
-                div.style.flexDirection = 'column';
-                div.style.alignItems = 'flex-start';
-                div.innerHTML = `
-                    <div style="width:100%; margin-bottom:4px;"><b>Email:</b> ${s.email}</div>
-                    <div style="width:100%; font-size:10px; color:#cbd5e1; margin-bottom:4px;">Device ID: ${s.device_id}</div>
-                    <div style="width:100%; display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-bottom:4px;">
-                        <span>Code:</span>
-                        <input type="text" id="admin_code_${key}" value="${s.verification_code}" maxlength="6" style="width:90px; padding:4px; margin:0;">
-                        <span>သက်တမ်း:</span>
-                        <select id="admin_dur_${key}" style="width:110px; padding:4px; margin:0;">
-                            <option value="3 months" ${s.account_duration==='3 months'?'selected':''}>၃ လ</option>
-                            <option value="6 months" ${s.account_duration==='6 months'?'selected':''}>၆ လ</option>
-                            <option value="12 months" ${s.account_duration==='12 months'?'selected':''}>၁၂ လ</option>
-                            <option value="24 months" ${s.account_duration==='24 months'?'selected':''}>၂၄ လ</option>
-                            <option value="life time" ${s.account_duration==='life time'?'selected':''}>Life Time</option>
-                        </select>
-                    </div>
-                    <div style="width:100%; display:flex; gap:5px; margin-top:4px;">
-                        <button onclick="submitAdminUserSettings('${s.email}', 'submit')" style="padding:4px 8px; font-size:10px; background:#16a34a; width:auto;">Submit & Approve</button>
-                        <button onclick="openAdminVerificationChatForUser('${s.email}', '${s.verification_code}')" style="padding:4px 8px; font-size:10px; background:#2563eb; width:auto;">Live Chat / Send Code</button>
-                        <button onclick="submitAdminUserSettings('${s.email}', 'ban')" style="padding:4px 8px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
-                        <button onclick="submitAdminUserSettings('${s.email}', 'remove')" style="padding:4px 8px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
-                    </div>
-                `;
-                container.appendChild(div);
-            });
-        }
-
-        function openAdminVerificationChatForUser(userEmail, code) {
-            const chatBox = document.getElementById('floatingLiveChat');
-            chatBox.style.display = 'flex';
-            document.getElementById('floatingChatTitle').innerText = `Admin Chat with User: ${userEmail}`;
-            document.getElementById('floatingChatEmailDisplay').innerText = `Target User Email: ${userEmail} | Verification Code: ${code}`;
-            document.getElementById('floatingChatMessages').innerHTML = `<div><b>System:</b> User sign up လုပ်ထားသော email ပေါ်နေပါသည်။ Verification code (${code}) ကို copy ကူးပြီး ဤ box တွင် ပို့ပေးနိုင်ပါသည်။</div>`;
-            document.getElementById('adminActionButtonsArea').style.display = 'block';
-        }
-
-        function renderVerifiedList(users) {
-            const container = document.getElementById('adminVerifiedSignupsContainer');
-            if (!container) return;
-            container.innerHTML = '';
-            if (users.length === 0) {
-                container.innerHTML = '<i>Sign up လုပ်ပြီးပြီးသား user မရှိပါ။</i>';
-                return;
-            }
-            users.forEach(u => {
-                let key = 'ver_' + u.email.replace(/[@.]/g, '_');
-                let div = document.createElement('div');
-                div.className = 'device-row';
-                div.style.flexDirection = 'column';
-                div.style.alignItems = 'flex-start';
-                div.innerHTML = `
-                    <div style="width:100%; margin-bottom:4px;"><b>Email:</b> ${u.email}</div>
-                    <div style="width:100%; font-size:10px; color:#cbd5e1; margin-bottom:4px;">Device ID: ${u.device_id}</div>
-                    <div style="width:100%; display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-bottom:4px;">
-                        <span>သက်တမ်း:</span>
-                        <select id="admin_dur_${key}" style="width:120px; padding:4px; margin:0;">
-                            <option value="3 months" ${u.account_duration==='3 months'?'selected':''}>၃ လ</option>
-                            <option value="6 months" ${u.account_duration==='6 months'?'selected':''}>၆ လ</option>
-                            <option value="12 months" ${u.account_duration==='12 months'?'selected':''}>၁၂ လ</option>
-                            <option value="24 months" ${u.account_duration==='24 months'?'selected':''}>၂၄ လ</option>
-                            <option value="life time" ${u.account_duration==='life time'?'selected':''}>Life Time</option>
-                        </select>
-                    </div>
-                    <div style="width:100%; display:flex; gap:5px; margin-top:4px;">
-                        <button onclick="submitAdminVerifiedSettings('${u.email}', '${key}')" style="padding:4px 8px; font-size:10px; background:#2563eb; width:auto;">Update Duration</button>
-                        <button onclick="submitAdminUserSettings('${u.email}', 'ban')" style="padding:4px 8px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
-                        <button onclick="submitAdminUserSettings('${u.email}', 'remove')" style="padding:4px 8px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
-                    </div>
-                `;
-                container.appendChild(div);
-            });
-        }
-
-        function renderBannedList(users) {
-            const container = document.getElementById('adminBannedSignupsContainer');
-            if (!container) return;
-            container.innerHTML = '';
-            if (users.length === 0) {
-                container.innerHTML = '<i>Ban ထားသော user မရှိပါ။</i>';
-                return;
-            }
-            users.forEach(u => {
-                let div = document.createElement('div');
-                div.className = 'device-row';
-                div.style.flexDirection = 'column';
-                div.style.alignItems = 'flex-start';
-                div.innerHTML = `
-                    <div style="width:100%; margin-bottom:4px;"><b>Email:</b> ${u.email}</div>
-                    <div style="width:100%; font-size:10px; color:#cbd5e1; margin-bottom:4px;">Device ID: ${u.device_id}</div>
-                    <div style="width:100%; display:flex; gap:5px; margin-top:4px;">
-                        <button onclick="submitAdminUserSettings('${u.email}', 'unban')" style="padding:4px 8px; font-size:10px; background:#16a34a; width:auto;">Unban</button>
-                        <button onclick="submitAdminUserSettings('${u.email}', 'remove')" style="padding:4px 8px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
-                    </div>
-                `;
-                container.appendChild(div);
+            .then(signups => {
+                const container = document.getElementById('adminRecentSignupsContainer');
+                if (!container) return;
+                container.innerHTML = '';
+                if (signups.length === 0) {
+                    container.innerHTML = '<i>လတ်တလော ၁၅ မိနစ်အတွင်း sign up လုပ်ထားသူ မရှိပါ။</i>';
+                    return;
+                }
+                signups.forEach(s => {
+                    let div = document.createElement('div');
+                    div.className = 'device-row';
+                    div.style.flexDirection = 'column';
+                    div.style.alignItems = 'flex-start';
+                    div.innerHTML = `
+                        <div style="width:100%; margin-bottom:4px;"><b>Email:</b> ${s.email}</div>
+                        <div style="width:100%; font-size:10px; color:#cbd5e1; margin-bottom:4px;">Device: ${s.device_id}</div>
+                        <div style="width:100%; display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-bottom:4px;">
+                            <span>Code (6 digits):</span>
+                            <input type="text" id="admin_code_${s.email.replace(/[@.]/g, '_')}" value="${s.verification_code}" maxlength="6" style="width:80px; padding:4px; margin:0;">
+                            <span>သက်တမ်း:</span>
+                            <select id="admin_dur_${s.email.replace(/[@.]/g, '_')}" style="width:100px; padding:4px; margin:0;">
+                                <option value="3 months" ${s.account_duration==='3 months'?'selected':''}>၃ လ</option>
+                                <option value="6 months" ${s.account_duration==='6 months'?'selected':''}>၆ လ</option>
+                                <option value="12 months" ${s.account_duration==='12 months'?'selected':''}>၁၂ လ</option>
+                                <option value="24 months" ${s.account_duration==='24 months'?'selected':''}>၂၄ လ</option>
+                                <option value="life time" ${s.account_duration==='life time'?'selected':''}>Life Time</option>
+                            </select>
+                        </div>
+                        <div style="width:100%; display:flex; gap:5px; margin-top:4px;">
+                            <button onclick="submitAdminUserSettings('${s.email}', 'submit')" style="padding:4px 8px; font-size:10px; background:#16a34a; width:auto;">Submit & Set</button>
+                            <button onclick="submitAdminUserSettings('${s.email}', 'ban')" style="padding:4px 8px; font-size:10px; background:#ca8a04; width:auto;">Ban</button>
+                            <button onclick="submitAdminUserSettings('${s.email}', 'remove')" style="padding:4px 8px; font-size:10px; background:#dc2626; width:auto;">Remove</button>
+                        </div>
+                    `;
+                    container.appendChild(div);
+                });
             });
         }
 
@@ -1629,381 +1162,331 @@ HTML_PAGE = """<!DOCTYPE html>
             .then(res => res.json())
             .then(data => {
                 if (data.success) {
-                    fetchAdminAllLists();
+                    alert("အချက်အလက်များ အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ။");
+                    fetchRecentSignupsForAdmin();
                 } else {
                     alert("Error: " + data.error);
                 }
             });
         }
 
-        function submitAdminVerifiedSettings(email, key) {
-            let durElem = document.getElementById('admin_dur_' + key);
-            let account_duration = durElem ? durElem.value : '3 months';
+        function openForgetPassword() {
+            const email = prompt("Google Account (Email) ထည့်ပါ:");
+            if (!email) return;
+            const newPassword = prompt("Password အသစ်ထည့်ပါ:");
+            if (!newPassword) return;
 
-            fetch('/admin_update_user_settings', {
+            fetch('/reset_password_google', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({email, account_duration, action: 'update_duration'})
+                body: JSON.stringify({email: email.trim().toLowerCase(), new_password: newPassword})
             })
             .then(res => res.json())
             .then(data => {
-                if (data.success) {
-                    alert("သက်တမ်း အောင်မြင်စွာ ပြောင်းလဲပြီးပါပြီ။");
-                    fetchAdminAllLists();
-                } else {
-                    alert("Error: " + data.error);
-                }
+                if (data.success) alert("Password အောင်မြင်စွာ ပြောင်းလဲပြီးပါပြီ။");
+                else alert("Error: " + data.error);
             });
         }
 
-        function saveAdminPrices() {
-            alert("Admin gift prices saved successfully.");
+        function logoutUser() {
+            localStorage.removeItem('wma_remember_email');
+            localStorage.removeItem('wma_remember_token');
+            localStorage.removeItem('wma_is_admin');
+            fetch('/logout', {method: 'POST'}).then(() => location.reload());
         }
 
-        function openUserProfileModal() {
-            document.getElementById('userProfileModal').style.display = 'block';
-            fetchUserProfileData(() => {
-                if (currentUserProfileData) {
-                    document.getElementById('modalUsername').value = currentUserProfileData.username || '';
-                    document.getElementById('modalAge').value = currentUserProfileData.age || '';
-                    document.getElementById('modalCountry').value = currentUserProfileData.country || '';
-                    updateProvinces();
-                    document.getElementById('modalProvince').value = currentUserProfileData.province || '';
-                    updateCities();
-                    document.getElementById('modalCity').value = currentUserProfileData.city || '';
-                    
-                    checkAgeAndSexFields();
-                    document.getElementById('modalSex').value = currentUserProfileData.sex || '';
-                    
-                    renderProfilePicturesUI();
-                    renderUserGiftsSummary();
-                }
+        function registerDeviceWithServer(email) {
+            const devId = getDeviceId();
+            socket.emit('register_device', {device_id: devId, google_account: email});
+            fetchDevices();
+        }
+
+        socket.on('device_status_update', () => { fetchDevices(); });
+        socket.on('online_users_refresh', () => { fetchDevices(); });
+
+        function fetchDevices() {
+            fetch('/get_devices')
+            .then(res => res.json())
+            .then(devices => {
+                activeDevicesCache = devices;
+                updateOnlineUsersListUI();
+                updateOnlineIndicators();
             });
         }
 
-        function closeUserProfileModal() {
-            document.getElementById('userProfileModal').style.display = 'none';
+        function getDisplayNameForEmail(email) {
+            let found = activeDevicesCache.find(d => d.account && d.account.trim().toLowerCase() === email.trim().toLowerCase());
+            let devId = found ? found.device_id : email.split('@')[0];
+            return getUserDisplayName(email, devId);
         }
 
-        function checkAgeAndSexFields() {
-            let ageVal = parseInt(document.getElementById('modalAge').value);
-            let sexSelect = document.getElementById('modalSex');
-            sexSelect.innerHTML = '<option value="">Select Sex</option>';
-
-            if (isNaN(ageVal) || ageVal < 18) {
-                sexSelect.disabled = true;
-                return;
-            }
-            sexSelect.disabled = false;
-            if (ageVal >= 18 && ageVal <= 25) {
-                sexSelect.innerHTML += '<option value="Boy">Boy</option><option value="Girl">Girl</option><option value="Gay">Gay</option><option value="Lesbian">Lesbian</option>';
-            } else if (ageVal >= 26 && ageVal <= 90) {
-                sexSelect.innerHTML += '<option value="Male">Male</option><option value="Female">Female</option><option value="Gay">Gay</option><option value="Lesbian">Lesbian</option>';
-            }
-        }
-
-        function saveUsername() {
-            let username = document.getElementById('modalUsername').value.trim();
-            if (!username) return;
-            if (username.length > 15) {
-                document.getElementById('usernameWarning').innerText = "Username must be max 15 letters";
-                return;
-            }
-            fetch('/update_user_profile', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({username})
-            }).then(res => res.json()).then(d => {
-                if (d.success) {
-                    document.getElementById('usernameWarning').innerText = "";
-                    alert("Username saved successfully.");
-                    fetchUserProfileData();
-                } else {
-                    document.getElementById('usernameWarning').innerText = d.error || "Error saving username";
-                }
-            });
-        }
-
-        function saveAge() {
-            let ageVal = parseInt(document.getElementById('modalAge').value);
-            if (isNaN(ageVal) || ageVal < 18) {
-                alert("အသက် 18 နှစ်အောက် မသုံးရပါ။ 18 နှင့် 90 ကြား ထည့်ပါ။");
-                return;
-            }
-            fetch('/update_user_profile', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({age: ageVal})
-            }).then(res => res.json()).then(d => {
-                if (d.success) {
-                    alert("Age saved successfully.");
-                    checkAgeAndSexFields();
-                }
-            });
-        }
-
-        function saveSex() {
-            let sexVal = document.getElementById('modalSex').value;
-            if (!sexVal) return;
-            fetch('/update_user_profile', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({sex: sexVal})
-            }).then(res => res.json()).then(d => {
-                if (d.success) alert("Sex saved successfully.");
-            });
-        }
-
-        function updateProvinces() {
-            let country = document.getElementById('modalCountry').value;
-            let provSelect = document.getElementById('modalProvince');
-            provSelect.innerHTML = '<option value="">Select Province/State</option>';
-            if (country === 'Myanmar') {
-                provSelect.innerHTML += '<option value="Mandalay">Mandalay Region</option><option value="Yangon">Yangon Region</option>';
-            } else if (country === 'Thailand') {
-                provSelect.innerHTML += '<option value="Bangkok">Bangkok</option><option value="Chiang Mai">Chiang Mai</option>';
-            }
-        }
-
-        function updateCities() {
-            let province = document.getElementById('modalProvince').value;
-            let citySelect = document.getElementById('modalCity');
-            citySelect.innerHTML = '<option value="">Select City</option>';
-            if (province === 'Mandalay') {
-                citySelect.innerHTML += '<option value="Mandalay City">Mandalay</option><option value="Pyin Oo Lwin">Pyin Oo Lwin</option>';
-            } else if (province === 'Yangon') {
-                citySelect.innerHTML += '<option value="Yangon City">Yangon</option>';
-            }
-        }
-
-        function saveLocation() {
-            let country = document.getElementById('modalCountry').value;
-            let province = document.getElementById('modalProvince').value;
-            let city = document.getElementById('modalCity').value;
-            fetch('/update_user_profile', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({country, province, city})
-            }).then(res => res.json()).then(d => {
-                if (d.success) alert("Location saved successfully.");
-            });
-        }
-
-        function renderProfilePicturesUI() {
-            const container = document.getElementById('profilePicturesContainer');
+        function updateOnlineUsersListUI() {
+            const container = document.getElementById('onlineUsersListContainer');
+            if (!container) return;
             container.innerHTML = '';
-            let pics = currentUserProfileData ? currentUserProfileData.pictures : ['', '', '', '', ''];
-            let activePic = currentUserProfileData ? currentUserProfileData.active_profile_pic : '';
-
-            for (let i = 0; i < 5; i++) {
-                let box = document.createElement('div');
-                box.style.width = '90px';
-                box.style.height = '90px';
-                box.style.border = '2px dashed var(--accent-color)';
-                box.style.borderRadius = '8px';
-                box.style.display = 'flex';
-                box.style.flexDirection = 'column';
-                box.style.alignItems = 'center';
-                box.style.justifyContent = 'center';
-                box.style.position = 'relative';
-                box.style.background = 'rgba(0,0,0,0.4)';
-                box.style.overflow = 'hidden';
-
-                if (pics[i]) {
-                    box.innerHTML = `<img src="${pics[i]}" style="width:100%; height:100%; object-fit:cover;">`;
-                    if (activePic === pics[i]) {
-                        box.style.borderColor = '#22c55e';
-                    }
-                } else {
-                    box.innerHTML = `<span style="font-size:10px; color:#cbd5e1;">+ Add Photo</span>`;
+            let onlineEmails = [];
+            activeDevicesCache.forEach(d => {
+                if (d.account && (d.status === 'approved' || d.account === 'officialwinmyat@gmail.com')) {
+                    onlineEmails.push(d.account.trim().toLowerCase());
                 }
-                container.appendChild(box);
+            });
+            if (onlineEmails.length === 0) {
+                container.innerHTML = '<i>No users online</i>';
+                return;
             }
+            onlineEmails.forEach(email => {
+                let displayName = getDisplayNameForEmail(email);
+                let div = document.createElement('div');
+                div.style.padding = '4px 0';
+                div.style.borderBottom = '1px solid rgba(255,255,255,0.1)';
+                div.innerHTML = `<span class="online-dot"></span> <span class="user-name-tag" data-email="${email}" onclick="openPrivateChatWith('${email}')">${displayName}</span>`;
+                container.appendChild(div);
+            });
         }
 
-        function renderUserGiftsSummary() {
-            const display = document.getElementById('userGiftsSummaryDisplay');
-            if (!currentUserProfileData) return;
-            display.innerHTML = `
-                <div>Rose Bought: ${currentUserProfileData.rose_bought || 0} | Received: ${currentUserProfileData.rose_received || 0}</div>
-                <div>Orchid Bought: ${currentUserProfileData.orchid_bought || 0} | Received: ${currentUserProfileData.orchid_received || 0}</div>
-                <div>Jasmine Bought: ${currentUserProfileData.jasmine_bought || 0} | Received: ${currentUserProfileData.jasmine_received || 0}</div>
-            `;
+        function updateOnlineIndicators() {
+            document.querySelectorAll('.user-name-tag').forEach(tag => {
+                const emailText = tag.getAttribute('data-email');
+                if (emailText) {
+                    let found = activeDevicesCache.find(d => d.account && d.account.trim().toLowerCase() === emailText.trim().toLowerCase());
+                    const isOnline = found && (found.status === 'approved' || found.account === 'officialwinmyat@gmail.com');
+                    let dot = tag.querySelector('.online-dot');
+                    if (isOnline) {
+                        if (!dot) {
+                            dot = document.createElement('span');
+                            dot.className = 'online-dot';
+                            tag.appendChild(dot);
+                        }
+                    } else {
+                        if (dot) dot.remove();
+                    }
+                }
+            });
         }
 
-        function openGiftBuyModal() {
-            document.getElementById('giftBuyModal').style.display = 'block';
-        }
-        function closeGiftBuyModal() {
-            document.getElementById('giftBuyModal').style.display = 'none';
+        function loadChatHistory(roomName) {
+            socket.emit('join_room', {room: roomName});
+            fetch(`/get_history?room=${roomName}`)
+            .then(res => res.json())
+            .then(data => {
+                const stream = document.getElementById('historyStream');
+                stream.innerHTML = '';
+                data.reverse().forEach(item => appendMessageToStream(item, false));
+            });
         }
 
-        function submitGiftPurchaseRequest() {
-            let rose = parseInt(document.getElementById('buyRoseQty').value) || 0;
-            let orchid = parseInt(document.getElementById('buyOrchidQty').value) || 0;
-            let jasmine = parseInt(document.getElementById('buyJasmineQty').value) || 0;
-
-            if (rose === 0 && orchid === 0 && jasmine === 0) {
-                alert("ကျေးဇူးပြု၍ လက်ဆောင်အရေအတွက် အနည်းဆုံးတစ်ခု ရွေးပါ။");
+        function openPrivateChatWith(otherUserEmail) {
+            const myEmail = localStorage.getItem('wma_remember_email') || '';
+            const targetEmail = otherUserEmail.trim().toLowerCase();
+            
+            if (myEmail && myEmail.trim().toLowerCase() === targetEmail) {
+                alert("သင်ကိုယ်တိုင်နှင့် Private Chat ဖွင့်၍မရပါ။");
                 return;
             }
 
-            let rosePrice = 1000, orchidPrice = 3000, jasminePrice = 5000;
-            let totalPrice = (rose * rosePrice) + (orchid * orchidPrice) + (jasmine * jasminePrice);
+            let emails = [myEmail || 'user', targetEmail].sort();
+            currentRoom = `private_${emails[0]}_${emails[1]}`;
+            knownPrivateRooms.add(currentRoom);
+            updatePrivateChatSwitcherDropdown();
+            
+            let targetDisplayName = getDisplayNameForEmail(targetEmail);
+            document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${targetDisplayName}`;
+            document.getElementById('goToMainChatBtn').style.display = 'block';
+            
+            loadChatHistory(currentRoom);
+        }
 
-            closeGiftBuyModal();
-            const buyChat = document.getElementById('floatingPresentBuyChat');
-            buyChat.style.display = 'flex';
-            document.getElementById('buyChatEmailDisplay').innerText = `Gift Purchase Request`;
-            
-            let autoMsg = `admin ကို ဒီလက်ဆောင်တွေ အရေအတွက် ဒီလောက်ဝယ်ချင်ပါတယ် ပိုက်ဆံဒီလောက် ကျပါတယ် (Rose: ${rose}, Orchid: ${orchid}, Jasmine: ${jasmine}) - Total: ${totalPrice} Ks. admin ဆီ ငွေလွှဲစရာ အကောင့် ပို့ပေးပါ`;
-            document.getElementById('buyChatMessages').innerHTML = `<div><b>System:</b> ${autoMsg}</div>`;
-            
-            const isAdmin = localStorage.getItem('wma_is_admin') === 'true';
-            if (isAdmin) {
-                document.getElementById('adminSellButton').style.display = 'block';
-            } else {
-                document.getElementById('adminSellButton').style.display = 'none';
+        function switchToMainChat() {
+            currentRoom = 'main_group';
+            document.getElementById('currentChatRoomTitle').innerText = "WMA QQ - Main Group Chat";
+            document.getElementById('goToMainChatBtn').style.display = 'none';
+            document.getElementById('privateChatSwitcher').value = 'main_group';
+            loadChatHistory(currentRoom);
+        }
+
+        function switchPrivateChatFromDropdown(selectElem) {
+            const val = selectElem.value;
+            if (val === 'main_group') {
+                switchToMainChat();
+            } else if (val.startsWith('private_')) {
+                currentRoom = val;
+                let parts = val.replace('private_', '').split('_');
+                let myEmail = localStorage.getItem('wma_remember_email') || '';
+                let otherEmail = parts[0] === myEmail ? parts[1] : parts[0];
+                let otherDisplayName = getDisplayNameForEmail(otherEmail);
+                document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${otherDisplayName}`;
+                document.getElementById('goToMainChatBtn').style.display = 'block';
+                loadChatHistory(currentRoom);
             }
         }
 
-        function adminExecuteSell() {
-            let rose = parseInt(document.getElementById('buyRoseQty').value) || 0;
-            let orchid = parseInt(document.getElementById('buyOrchidQty').value) || 0;
-            let jasmine = parseInt(document.getElementById('buyJasmineQty').value) || 0;
-            let targetEmail = localStorage.getItem('wma_remember_email') || '';
-
-            socket.emit('admin_sell_presents', { email: targetEmail, rose, orchid, jasmine });
+        function updatePrivateChatSwitcherDropdown() {
+            const switcher = document.getElementById('privateChatSwitcher');
+            if (!switcher) return;
+            switcher.innerHTML = `<option value="main_group">💬 Main Group Chat</option>`;
+            knownPrivateRooms.forEach(room => {
+                let parts = room.replace('private_', '').split('_');
+                let myEmail = localStorage.getItem('wma_remember_email') || '';
+                let otherEmail = parts[0] === myEmail ? parts[1] : parts[0];
+                let otherDisplayName = getDisplayNameForEmail(otherEmail);
+                let opt = document.createElement('option');
+                opt.value = room;
+                opt.innerText = `🔒 Private: ${otherDisplayName}`;
+                if (room === currentRoom) opt.selected = true;
+                switcher.appendChild(opt);
+            });
         }
 
-        socket.on('presents_sold_success', function(data) {
-            alert("Presents successfully processed and added to profile!");
-            closeBuyChat();
-            fetchUserProfileData(() => { renderUserGiftsSummary(); });
+        socket.on('broadcast_message', data => {
+            const myEmail = localStorage.getItem('wma_remember_email') || '';
+            
+            if (data.room.startsWith('private_')) {
+                knownPrivateRooms.add(data.room);
+                updatePrivateChatSwitcherDropdown();
+                
+                if (data.room !== currentRoom && data.user.trim().toLowerCase() !== myEmail.toLowerCase()) {
+                    let senderName = getDisplayNameForEmail(data.user);
+                    triggerTopLeftNotification(`${senderName} က သင့်ကို Private message ပို့နေပါသည်`);
+                }
+            } else if (data.room === 'main_group' && currentRoom !== 'main_group' && data.user.trim().toLowerCase() !== myEmail.toLowerCase()) {
+                let senderName = getDisplayNameForEmail(data.user);
+                triggerTopLeftNotification(`${senderName} က Main Chat မှာ message ပို့နေပါသည်`);
+            }
+
+            if (data.room === currentRoom) {
+                appendMessageToStream(data, true);
+            }
         });
 
-        function openRedeemModal() {
-            document.getElementById('redeemModal').style.display = 'block';
+        function triggerTopLeftNotification(text) {
+            const banner = document.getElementById('topNotificationBanner');
+            if (!banner) return;
+            banner.innerText = text;
+            banner.style.display = 'block';
+            if (notificationTimeout) clearTimeout(notificationTimeout);
+            notificationTimeout = setTimeout(() => {
+                banner.style.display = 'none';
+            }, 2000);
         }
-        function closeRedeemModal() {
-            document.getElementById('redeemModal').style.display = 'none';
-        }
 
-        function submitRedeemRequest() {
-            let rose = parseInt(document.getElementById('redeemRoseQty').value) || 0;
-            let orchid = parseInt(document.getElementById('redeemOrchidQty').value) || 0;
-            let jasmine = parseInt(document.getElementById('redeemJasmineQty').value) || 0;
-            let kpayName = document.getElementById('redeemKpayName').value.trim();
-            let kpayNumber = document.getElementById('redeemKpayNumber').value.trim();
+        socket.on('message_deleted', data => {
+            const el = document.getElementById('msg-box-' + data.id);
+            if (el) el.remove();
+        });
 
-            if (!kpayName || !kpayNumber) {
-                alert("KPay Name နှင့် Number ထည့်ပါ။");
-                return;
-            }
-
-            let roseVal = 1000 * 0.9, orchidVal = 3000 * 0.9, jasmineVal = 5000 * 0.9;
-            let totalVal = (rose * roseVal) + (orchid * orchidVal) + (jasmine * jasmineVal);
-
-            closeRedeemModal();
-            const redeemChat = document.getElementById('floatingPresentRedeemChat');
-            redeemChat.style.display = 'flex';
-            document.getElementById('redeemChatEmailDisplay').innerText = `Redeem Request | KPay: ${kpayName} (${kpayNumber})`;
+        function appendMessageToStream(item, triggerNotification = false) {
+            const stream = document.getElementById('historyStream');
+            const div = document.createElement('div');
+            div.className = 'history-item';
+            div.id = 'msg-box-' + item.id;
             
-            let autoMsg = `Redeem Request (Rose: ${rose}, Orchid: ${orchid}, Jasmine: ${jasmine}) - Expected Payout: ${totalVal} Ks. KPay Name: ${kpayName}, Number: ${kpayNumber}`;
-            document.getElementById('redeemChatMessages').innerHTML = `<div><b>System:</b> ${autoMsg}</div>`;
+            const cleanUserEmail = item.user.trim().toLowerCase();
+            let found = activeDevicesCache.find(d => d.account && d.account.trim().toLowerCase() === cleanUserEmail);
+            const isOnline = found && (found.status === 'approved' || found.account === 'officialwinmyat@gmail.com');
+            let dotHtml = isOnline ? `<span class="online-dot"></span>` : ``;
+            let displayName = getDisplayNameForEmail(item.user);
+            let userHtml = `<span class="user-name-tag" data-email="${item.user}" onclick="openPrivateChatWith('${item.user}')">${displayName}${dotHtml}</span>`;
+            let contentHtml = '';
+            
+            if (item.type === 'text') {
+                contentHtml = `<div><b>${userHtml}:</b> ${item.content}</div>`;
+            } else if (item.type === 'voice') {
+                contentHtml = `<div><b>${userHtml} [Voice]:</b><audio controls src="${item.content}" style="width:100%; margin-top:5px;"></audio></div>`;
+            } else if (item.type === 'file') {
+                if (item.filename && (item.filename.endsWith('.jpg') || item.filename.endsWith('.png') || item.filename.endsWith('.jpeg') || item.filename.endsWith('.gif'))) {
+                    contentHtml = `<div><b>${userHtml} [Image]:</b><br><img src="${item.content}" class="chat-image-preview"></div>`;
+                } else {
+                    contentHtml = `<div><b>${userHtml} [File]:</b> <a href="${item.content}" download="${item.filename || 'download'}" style="color:var(--accent-color);">${item.filename || 'Download File'}</a></div>`;
+                }
+            } else if (item.type === 'videocall_alert') {
+                contentHtml = `<div><b>🚨 Anime Video Call Alert:</b> ${displayName} has started a video call!
+                    <div style="margin-top: 8px; display: flex; gap: 8px;">
+                        <button onclick="acceptVideoCall('${item.user}')" style="background:#16a34a; padding:4px 12px; font-size:12px; width:auto; border-radius:4px;">Accept</button>
+                        <button onclick="deleteMessageItem(${item.id})" style="background:#dc2626; padding:4px 12px; font-size:12px; width:auto; border-radius:4px;">Delete</button>
+                    </div>
+                </div>`;
+            }
+            
+            let actionButtons = '';
+            if (item.type === 'text') {
+                actionButtons = `<div class="msg-actions"><button onclick="copyTextContent('${encodeURIComponent(item.content)}')">Copy</button><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button></div>`;
+            } else if (item.type === 'voice' || item.type === 'file') {
+                actionButtons = `<div class="msg-actions"><button onclick="saveToDevice('${item.content}', '${item.filename || 'media_file'}')">Save</button><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button></div>`;
+            } else if (item.type === 'videocall_alert') {
+                actionButtons = `<div class="msg-actions"><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button></div>`;
+            }
+            
+            div.innerHTML = contentHtml + (item.type !== 'videocall_alert' ? actionButtons : '') + `<div style="font-size:10px; color:#94a3b8; margin-top:4px;">${item.timestamp}</div>`;
+            stream.appendChild(div);
+            stream.scrollTop = stream.scrollHeight;
 
-            const isAdmin = localStorage.getItem('wma_is_admin') === 'true';
-            if (isAdmin) {
-                document.getElementById('adminPermitRedeemButton').style.display = 'block';
-            } else {
-                document.getElementById('adminPermitRedeemButton').style.display = 'none';
+            let myEmail = localStorage.getItem('wma_remember_email') || '';
+            if (triggerNotification && 'Notification' in window && Notification.permission === 'granted' && item.user.trim().toLowerCase() !== myEmail.toLowerCase()) {
+                new Notification(`WMA QQ - Message from ${displayName}`, {
+                    body: item.type === 'text' ? item.content : `New ${item.type} received!`,
+                    icon: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=120&q=80'
+                });
             }
         }
 
-        function adminExecutePermitRedeem() {
-            alert("Redeem permitted by admin.");
-            closeRedeemChat();
+        function copyTextContent(encodedText) {
+            navigator.clipboard.writeText(decodeURIComponent(encodedText));
+        }
+
+        function saveToDevice(dataUrl, filename) {
+            const a = document.createElement('a');
+            a.href = dataUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        function deleteMessageItem(id) {
+            socket.emit('delete_message_item', {id: id, room: currentRoom});
         }
 
         function toggleRecordVoice() {
             const btn = document.getElementById('recBtn');
-            if (btn.innerText.includes('Record')) {
-                navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+            const options = document.getElementById('voiceOptions');
+            if (btn.innerText.includes("Record")) {
+                audioChunks = [];
+                navigator.mediaDevices.getUserMedia({audio: true}).then(stream => {
                     mediaRecorder = new MediaRecorder(stream);
-                    audioChunks = [];
                     mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
                     mediaRecorder.onstop = () => {
-                        document.getElementById('voiceOptions').style.display = 'block';
+                        const audioBlob = new Blob(audioChunks, {type: 'audio/mp3'});
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            window.tempVoiceData = reader.result;
+                            options.style.display = 'block';
+                        };
+                        reader.readAsDataURL(audioBlob);
                     };
                     mediaRecorder.start();
-                    btn.innerText = "Stop Recording (3s)";
+                    btn.innerText = "Stop Recording...";
                     setTimeout(() => {
                         if (mediaRecorder && mediaRecorder.state === 'recording') {
                             mediaRecorder.stop();
                             btn.innerText = "Record Voice (3s)";
                         }
                     }, 3000);
-                }).catch(err => alert("Mic permission denied"));
-            } else {
-                if (mediaRecorder && mediaRecorder.state === 'recording') {
-                    mediaRecorder.stop();
-                    btn.innerText = "Record Voice (3s)";
-                }
+                });
             }
         }
 
         function sendVoice(storeType) {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const base64Audio = e.target.result;
-                const devId = getDeviceId();
-                const email = localStorage.getItem('wma_remember_email') || '';
-                const userName = getUserDisplayName(email, devId);
-
+            if (window.tempVoiceData) {
+                let myEmail = localStorage.getItem('wma_remember_email') || 'user';
                 socket.emit('new_message', {
-                    user: userName,
-                    type: 'audio',
-                    content: base64Audio,
-                    filename: 'voice_message.webm',
-                    store: storeType,
+                    user: myEmail,
+                    type: 'voice',
+                    content: window.tempVoiceData,
+                    store: '48 Hours',
                     room: currentRoom
                 });
                 document.getElementById('voiceOptions').style.display = 'none';
-            };
-            reader.readAsDataURL(audioBlob);
-        }
-
-        function triggerVideoCall() {
-            document.getElementById('videoPopup').style.display = 'block';
-            navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
-                localStream = stream;
-                document.getElementById('localVideo').srcObject = stream;
-                socket.emit('trigger_video_call', { room: currentRoom });
-            }).catch(err => alert("Camera/Mic error"));
-        }
-
-        function stopConference() {
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-            }
-            closePopup();
-        }
-
-        function closePopup() {
-            document.getElementById('videoPopup').style.display = 'none';
-        }
-
-        function toggleMuteSpeaker() {
-            isSpeakerMuted = !isSpeakerMuted;
-            document.getElementById('muteSpeakerBtn').innerText = isSpeakerMuted ? "Unmute Speaker" : "Mute Speaker";
-        }
-
-        function toggleMuteCamera() {
-            if (localStream) {
-                localStream.getVideoTracks().forEach(track => { track.enabled = !track.enabled; });
-                isCameraMuted = !isCameraMuted;
-                document.getElementById('muteCameraBtn').innerText = isCameraMuted ? "Unmute Camera" : "Mute Camera";
+                window.tempVoiceData = null;
             }
         }
 
@@ -2011,25 +1494,21 @@ HTML_PAGE = """<!DOCTYPE html>
             let val = textarea.value.trim();
             if (val.endsWith('=')) {
                 try {
-                    let expr = val.slice(0, -1).trim();
-                    let res = eval(expr);
-                    textarea.value = val + ' ' + res;
+                    let expr = val.slice(0, -1);
+                    let result = eval(expr);
+                    textarea.value = val + ' ' + result;
                 } catch(e) {}
             }
         }
 
         function sendText() {
-            const txt = document.getElementById('textContent').value.trim();
-            if (!txt) return;
-            const devId = getDeviceId();
-            const email = localStorage.getItem('wma_remember_email') || '';
-            const userName = getUserDisplayName(email, devId);
-
+            const content = document.getElementById('textContent').value;
+            if (!content) return;
+            let myEmail = localStorage.getItem('wma_remember_email') || 'user';
             socket.emit('new_message', {
-                user: userName,
+                user: myEmail,
                 type: 'text',
-                content: txt,
-                filename: '',
+                content: content,
                 store: '48 Hours',
                 room: currentRoom
             });
@@ -2039,10 +1518,6 @@ HTML_PAGE = """<!DOCTYPE html>
         function handleFileSelected(input) {
             if (input.files && input.files[0]) {
                 const file = input.files[0];
-                if (file.size > 50 * 1024 * 1024) {
-                    alert("File size exceeds 50MB limit.");
-                    return;
-                }
                 selectedFileName = file.name;
                 const reader = new FileReader();
                 reader.onload = function(e) {
@@ -2056,111 +1531,144 @@ HTML_PAGE = """<!DOCTYPE html>
 
         function sendFile() {
             if (!selectedFileBase64) return;
-            const devId = getDeviceId();
-            const email = localStorage.getItem('wma_remember_email') || '';
-            const userName = getUserDisplayName(email, devId);
-            let msgType = selectedFileName.match(/\.(jpeg|jpg|png|gif)$/i) ? 'image' : 'file';
-
+            let myEmail = localStorage.getItem('wma_remember_email') || 'user';
             socket.emit('new_message', {
-                user: userName,
-                type: msgType,
+                user: myEmail,
+                type: 'file',
                 content: selectedFileBase64,
                 filename: selectedFileName,
                 store: '48 Hours',
                 room: currentRoom
             });
-
-            selectedFileBase64 = null;
-            selectedFileName = '';
             document.getElementById('fileInput').value = '';
+            selectedFileBase64 = null;
             document.getElementById('sendFileBtn').disabled = true;
             document.getElementById('sendFileBtn').style.opacity = '0.5';
         }
 
-        function loadChatHistory(room) {
-            fetch(`/get_history?room=${room}`)
-            .then(res => res.json())
-            .then(data => {
-                const stream = document.getElementById('historyStream');
-                stream.innerHTML = '';
-                data.reverse().forEach(msg => appendMessageToStream(msg));
-                stream.scrollTop = stream.scrollHeight;
+        function triggerVideoCall() {
+            let myEmail = localStorage.getItem('wma_remember_email') || 'user';
+            socket.emit('trigger_video_call', {user: myEmail});
+            socket.emit('new_message', {
+                user: myEmail,
+                type: 'videocall_alert',
+                content: 'Triggered conference',
+                store: '48 Hours',
+                room: currentRoom
             });
+            startConferenceUI(myEmail);
         }
 
-        function appendMessageToStream(msg) {
-            const stream = document.getElementById('historyStream');
-            const div = document.createElement('div');
-            div.className = 'history-item';
-            div.id = `msg_item_${msg.id}`;
+        socket.on('incoming_video_call', data => {});
 
-            let contentHtml = '';
-            if (msg.type === 'text') {
-                contentHtml = `<div>${escapeHtml(msg.content)}</div>`;
-            } else if (msg.type === 'image') {
-                contentHtml = `<div><b>[Image: ${msg.filename}]</b><br><img src="${msg.content}" class="chat-image-preview"></div>`;
-            } else if (msg.type === 'audio') {
-                contentHtml = `<div><b>[Voice Message]</b><br><audio controls src="${msg.content}"></audio></div>`;
-            } else if (msg.type === 'file') {
-                contentHtml = `<div><b>[File: ${msg.filename}]</b><br><a href="${msg.content}" download="${msg.filename}" style="color:var(--accent-color);">Download File</a></div>`;
+        function acceptVideoCall(callerUser) {
+            startConferenceUI(callerUser);
+            let myEmail = localStorage.getItem('wma_remember_email') || 'user';
+            socket.emit('video_signal', {type: 'join_call', user: myEmail});
+        }
+
+        function startConferenceUI(callerName) {
+            document.getElementById('videoPopup').style.display = 'block';
+            let callerDisplayName = getDisplayNameForEmail(callerName);
+            document.getElementById('callerInfo').innerText = `Conference Initiated by: ${callerDisplayName}`;
+            navigator.mediaDevices.getUserMedia({video: true, audio: true})
+            .then(stream => {
+                localStream = stream;
+                document.getElementById('localVideo').srcObject = stream;
+                socket.emit('video_signal', {type: 'ready_peer', sender: socket.id});
+            }).catch(err => alert("Camera permission error: " + err));
+        }
+
+        socket.on('video_signal_relay', async data => {
+            const senderId = data.sender;
+            if (senderId === socket.id) return;
+            if (data.type === 'ready_peer' || data.type === 'join_call') {
+                if (!localStream) return;
+                let pc = createPeerConnection(senderId);
+                let offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                socket.emit('video_signal', {type: 'offer', offer: offer, sender: socket.id, target: senderId});
+            } else if (data.type === 'offer' && data.target === socket.id) {
+                let pc = createPeerConnection(senderId);
+                await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+                let answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                socket.emit('video_signal', {type: 'answer', answer: answer, sender: socket.id, target: senderId});
+            } else if (data.type === 'answer' && data.target === socket.id) {
+                let pc = peerConnections[senderId];
+                if (pc) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+            } else if (data.type === 'candidate' && data.target === socket.id) {
+                let pc = peerConnections[senderId];
+                if (pc && data.candidate) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
             }
+        });
 
-            div.innerHTML = `
-                <div style="font-weight:bold; color:var(--accent-color); margin-bottom:4px;">${escapeHtml(msg.user)} <span style="font-size:10px; color:#94a3b8;">(${msg.timestamp})</span></div>
-                ${contentHtml}
-                <div class="msg-actions">
-                    <button onclick="deleteMessageItem(${msg.id})">Delete</button>
-                </div>
-            `;
-            stream.appendChild(div);
-            stream.scrollTop = stream.scrollHeight;
+        function createPeerConnection(remoteSocketId) {
+            if (peerConnections[remoteSocketId]) return peerConnections[remoteSocketId];
+            let pc = new RTCPeerConnection(servers);
+            peerConnections[remoteSocketId] = pc;
+            if (localStream) localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            pc.onicecandidate = event => {
+                if (event.candidate) socket.emit('video_signal', {type: 'candidate', candidate: event.candidate, sender: socket.id, target: remoteSocketId});
+            };
+            pc.ontrack = event => {
+                let gridContainer = document.getElementById('videoGridContainer');
+                let remoteVideoId = 'remoteVideo_' + remoteSocketId;
+                let existingBox = document.getElementById(remoteVideoId);
+                if (!existingBox) {
+                    let remoteBox = document.createElement('div');
+                    remoteBox.className = 'video-box';
+                    remoteBox.id = remoteVideoId;
+                    remoteBox.innerHTML = `<video autoplay playsinline></video><div>Participant</div>`;
+                    gridContainer.appendChild(remoteBox);
+                    existingBox = remoteBox;
+                }
+                let videoElement = existingBox.querySelector('video');
+                if (videoElement && event.streams[0]) videoElement.srcObject = event.streams[0];
+            };
+            return pc;
         }
 
-        function escapeHtml(text) {
-            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        function toggleMuteSpeaker() {
+            if (!localStream) return;
+            isSpeakerMuted = !isSpeakerMuted;
+            localStream.getAudioTracks().forEach(track => { track.enabled = !isSpeakerMuted; });
+            const btn = document.getElementById('muteSpeakerBtn');
+            btn.innerText = isSpeakerMuted ? "Unmute Speaker" : "Mute Speaker";
+            btn.style.background = isSpeakerMuted ? "#dc2626" : "#ca8a04";
         }
 
-        function deleteMessageItem(id) {
-            socket.emit('delete_message_item', { id: id, room: currentRoom });
+        function toggleMuteCamera() {
+            if (!localStream) return;
+            isCameraMuted = !isCameraMuted;
+            localStream.getVideoTracks().forEach(track => { track.enabled = !isCameraMuted; });
+            const btn = document.getElementById('muteCameraBtn');
+            btn.innerText = isCameraMuted ? "Unmute Camera" : "Mute Camera";
+            btn.style.background = isCameraMuted ? "#dc2626" : "#2563eb";
         }
 
-        function registerDeviceWithServer(email) {
-            const devId = getDeviceId();
-            socket.emit('register_device', { device_id: devId, google_account: email });
-            socket.emit('join_room', { room: currentRoom });
+        function stopConference() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            for (let id in peerConnections) { peerConnections[id].close(); }
+            peerConnections = {};
+            let gridContainer = document.getElementById('videoGridContainer');
+            gridContainer.innerHTML = '<div class="video-box"><video id="localVideo" autoplay muted playsinline></video><div>Local Stream (You)</div></div>';
+            closePopup();
         }
+
+        function closePopup() { document.getElementById('videoPopup').style.display = 'none'; }
 
         function resetStorage() {
-            socket.emit('reset_storage');
+            if (confirm("Are you sure you want to reset all storage?")) socket.emit('reset_storage');
         }
 
-        function switchToMainChat() {
-            currentRoom = 'main_group';
-            document.getElementById('currentChatRoomTitle').innerText = 'WeMeet - Main Group Chat';
-            document.getElementById('goToMainChatBtn').style.display = 'none';
-            socket.emit('join_room', { room: currentRoom });
-            loadChatHistory(currentRoom);
-        }
-
-        function switchPrivateChatFromDropdown(select) {
-            let room = select.value;
-            if (room && room !== 'main_group') {
-                currentRoom = room;
-                document.getElementById('currentChatRoomTitle').innerText = `Private Chat: ${room}`;
-                document.getElementById('goToMainChatBtn').style.display = 'block';
-                socket.emit('join_room', { room: currentRoom });
-                loadChatHistory(currentRoom);
-            }
-        }
-
-        function logoutUser() {
-            fetch('/logout', { method: 'POST' }).then(() => {
-                localStorage.removeItem('wma_remember_token');
-                localStorage.removeItem('wma_remember_email');
-                localStorage.removeItem('wma_is_admin');
-                location.reload();
-            });
-        }
+        socket.on('storage_reset', () => {
+            document.getElementById('historyStream').innerHTML = '';
+            alert("Storage has been reset.");
+        });
     </script>
 </body>
 </html>
