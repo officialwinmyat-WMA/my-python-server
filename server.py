@@ -442,6 +442,9 @@ def update_user_profile():
     cursor = conn.cursor()
     
     if username:
+        if len(username) > 15:
+            conn.close()
+            return jsonify({"success": False, "error": "Username must be max 15 letters"})
         cursor.execute('SELECT id FROM users WHERE username = ? AND email != ?', (username, email))
         if cursor.fetchone():
             conn.close()
@@ -695,6 +698,26 @@ def handle_reset():
         conn.close()
         socketio.emit('storage_reset')
 
+@socketio.on('admin_sell_presents')
+def handle_admin_sell_presents(data):
+    user_email = data.get('email')
+    rose = int(data.get('rose', 0))
+    orchid = int(data.get('orchid', 0))
+    jasmine = int(data.get('jasmine', 0))
+    
+    conn = sqlite3.connect('wma_qq_private.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT rose_bought, orchid_bought, jasmine_bought FROM users WHERE email = ?', (user_email,))
+    row = cursor.fetchone()
+    if row:
+        new_rose = row[0] + rose
+        new_orchid = row[1] + orchid
+        new_jasmine = row[2] + jasmine
+        cursor.execute('UPDATE users SET rose_bought = ?, orchid_bought = ?, jasmine_bought = ? WHERE email = ?', (new_rose, new_orchid, new_jasmine, user_email))
+        conn.commit()
+    conn.close()
+    socketio.emit('presents_sold_success', {'email': user_email, 'rose_bought': new_rose if row else rose, 'orchid_bought': new_orchid if row else orchid, 'jasmine_bought': new_jasmine if row else jasmine})
+
 HTML_PAGE = """<!DOCTYPE html>
 <html>
 <head>
@@ -796,9 +819,9 @@ HTML_PAGE = """<!DOCTYPE html>
         }
         #resetBtn { position: absolute; top: 15px; right: 15px; z-index: 999; background: #dc2626; color: white; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none; }
         #goToMainChatBtn { display: none; margin-bottom: 10px; background: #2563eb; color: white; font-weight: bold; border: 2px solid #fff; padding: 8px; border-radius: 6px; cursor: pointer; text-align: center; }
-        #floatingLiveChat {
+        #floatingLiveChat, #floatingPresentBuyChat, #floatingPresentRedeemChat {
             display: none; position: fixed; bottom: 20px; right: 20px; width: 320px; max-height: 400px; background: rgba(20, 24, 33, 0.85);
-            border: 3px solid var(--accent-color); border-radius: 10px; z-index: 10005; padding: 12px; box-shadow: 0 0 20px var(--accent-color); display: flex; flex-direction: column;
+            border: 3px solid var(--accent-color); border-radius: 10px; z-index: 10005; padding: 12px; box-shadow: 0 0 20px var(--accent-color); flex-direction: column;
             backdrop-filter: blur(14px);
         }
         #videoPopup {
@@ -892,6 +915,42 @@ HTML_PAGE = """<!DOCTYPE html>
         </div>
     </div>
 
+    <!-- Temporary Present Buy Floating Live Chat Box -->
+    <div id="floatingPresentBuyChat">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--accent-color); padding-bottom:5px; margin-bottom:8px;">
+            <span id="buyChatTitle" style="font-weight:bold; color:var(--accent-color); font-size:13px;">Present Buy Chat</span>
+            <button onclick="closeBuyChat()" style="background:#dc2626; width:auto; padding:2px 6px; font-size:11px; margin:0;">Close</button>
+        </div>
+        <div id="buyChatEmailDisplay" style="font-size:11px; color:#cbd5e1; margin-bottom:5px;"></div>
+        <div id="buyChatMessages" style="flex:1; max-height:180px; overflow-y:auto; background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; font-size:12px; margin-bottom:8px;"></div>
+        <div>
+            <input type="text" id="buyChatInput" placeholder="Message / KPay info..." style="font-size:12px; padding:6px; margin:4px 0;">
+            <input type="file" id="buyChatImageInput" style="display:none;" onchange="sendBuyChatImage(this)">
+            <div style="display:flex; gap:5px; margin-top:4px;">
+                <button onclick="sendBuyChatText()" style="padding:6px; font-size:11px; background:var(--accent-color);">Send Text</button>
+                <button onclick="document.getElementById('buyChatImageInput').click()" style="padding:6px; font-size:11px; background:#2563eb;">Send Image</button>
+                <button id="adminSellButton" onclick="adminExecuteSell()" style="padding:6px; font-size:11px; background:#16a34a; display:none;">Sell Presents</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Temporary Present Redeem Floating Live Chat Box -->
+    <div id="floatingPresentRedeemChat">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--accent-color); padding-bottom:5px; margin-bottom:8px;">
+            <span id="redeemChatTitle" style="font-weight:bold; color:var(--accent-color); font-size:13px;">Present Redeem Chat</span>
+            <button onclick="closeRedeemChat()" style="background:#dc2626; width:auto; padding:2px 6px; font-size:11px; margin:0;">Close</button>
+        </div>
+        <div id="redeemChatEmailDisplay" style="font-size:11px; color:#cbd5e1; margin-bottom:5px;"></div>
+        <div id="redeemChatMessages" style="flex:1; max-height:180px; overflow-y:auto; background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; font-size:12px; margin-bottom:8px;"></div>
+        <div>
+            <input type="text" id="redeemChatInput" placeholder="Message..." style="font-size:12px; padding:6px; margin:4px 0;">
+            <div style="display:flex; gap:5px; margin-top:4px;">
+                <button onclick="sendRedeemChatText()" style="padding:6px; font-size:11px; background:var(--accent-color);">Send Text</button>
+                <button id="adminPermitRedeemButton" onclick="adminExecutePermitRedeem()" style="padding:6px; font-size:11px; background:#16a34a; display:none;">Permitted Redeem</button>
+            </div>
+        </div>
+    </div>
+
     <div id="appContainer">
         <div id="videoPopup">
             <h3>WeMeet - Anime Video Conference</h3>
@@ -942,10 +1001,10 @@ HTML_PAGE = """<!DOCTYPE html>
                 <h4 style="color: #f59e0b;">👑 Admin Control Panel</h4>
                 <div class="admin-section-title">🎁 Admin Gift Box Prices Setup</div>
                 <div style="display:flex; gap:5px; align-items:center; font-size:12px;">
-                    <span>Rose:</span><input type="number" id="adminRosePrice" placeholder="Price" style="width:70px; padding:4px;">
-                    <span>Orchid:</span><input type="number" id="adminOrchidPrice" placeholder="Price" style="width:70px; padding:4px;">
-                    <span>Jasmine:</span><input type="number" id="adminJasminePrice" placeholder="Price" style="width:70px; padding:4px;">
-                    <button onclick="saveAdminPrices()" style="width:auto; padding:4px 8px; background:#f59e0b;">Submit Prices</button>
+                    <span>Rose:</span><input type="number" id="adminRosePrice" value="1000" style="width:60px; padding:4px;">
+                    <span>Orchid:</span><input type="number" id="adminOrchidPrice" value="3000" style="width:60px; padding:4px;">
+                    <span>Jasmine:</span><input type="number" id="adminJasminePrice" value="5000" style="width:60px; padding:4px;">
+                    <button onclick="saveAdminPrices()" style="width:auto; padding:4px 8px; background:#f59e0b;">Save</button>
                 </div>
                 
                 <div class="admin-section-title">⏱️ Sign up လုပ်နေဆဲ စာရင်း</div>
@@ -1000,22 +1059,27 @@ HTML_PAGE = """<!DOCTYPE html>
             
             <div style="font-size:13px; margin-bottom:10px;">
                 <label>Username (max 15 letters):</label>
-                <input type="text" id="modalUsername" maxlength="15" placeholder="Enter username">
+                <div style="display:flex; gap:5px;">
+                    <input type="text" id="modalUsername" maxlength="15" placeholder="Enter username">
+                    <button onclick="saveUsername()" style="width:auto; padding:4px 8px; font-size:11px; background:var(--accent-color);">Save</button>
+                </div>
                 <div id="usernameWarning" style="color:#f87171; font-size:11px;"></div>
             </div>
 
             <div style="font-size:13px; margin-bottom:10px;">
                 <label>Age (18 to 90): အသက် 18 နှစ်အောက် မသုံးရပါ</label>
-                <input type="number" id="modalAge" min="18" max="90" placeholder="Age" onchange="checkAgeAndSexFields()">
-                <button onclick="saveAge()" style="width:auto; padding:4px 8px; font-size:11px; background:var(--accent-color);">Save Age</button>
+                <div style="display:flex; gap:5px;">
+                    <input type="number" id="modalAge" min="18" max="90" placeholder="Age" onchange="checkAgeAndSexFields()">
+                    <button onclick="saveAge()" style="width:auto; padding:4px 8px; font-size:11px; background:var(--accent-color);">Save</button>
+                </div>
             </div>
 
             <div style="font-size:13px; margin-bottom:10px;">
                 <label>Sex:</label>
-                <select id="modalSex" disabled>
-                    <option value="">Select Sex</option>
-                </select>
-                <button onclick="saveSex()" style="width:auto; padding:4px 8px; font-size:11px; background:var(--accent-color);">Save Sex</button>
+                <div style="display:flex; gap:5px;">
+                    <select id="modalSex" disabled><option value="">Select Sex</option></select>
+                    <button onclick="saveSex()" style="width:auto; padding:4px 8px; font-size:11px; background:var(--accent-color);">Save</button>
+                </div>
             </div>
 
             <div style="font-size:13px; margin-bottom:10px;">
@@ -1062,7 +1126,11 @@ HTML_PAGE = """<!DOCTYPE html>
     <div id="redeemModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100vh; background:rgba(10,14,23,0.9); z-index:10003; padding:20px; box-sizing:border-box; overflow-y:auto; backdrop-filter:blur(16px);">
         <div style="max-width:450px; margin:40px auto; background:rgba(20,24,33,0.95); border:3px solid var(--accent-color); border-radius:12px; padding:20px; backdrop-filter:blur(18px);">
             <h3 style="color:var(--accent-color); margin-top:0;">လက်ဆောင်များ ထုတ်ယူရန် (Redeem)</h3>
-            <div style="font-size:13px; margin-bottom:10px;" id="redeemSelectionArea"></div>
+            <div style="font-size:13px; margin-bottom:10px;" id="redeemSelectionArea">
+                <label>Rose Qty to Redeem:</label><input type="number" id="redeemRoseQty" value="0" min="0">
+                <label>Orchid Qty to Redeem:</label><input type="number" id="redeemOrchidQty" value="0" min="0">
+                <label>Jasmine Qty to Redeem:</label><input type="number" id="redeemJasmineQty" value="0" min="0">
+            </div>
             <div style="font-size:13px; margin-bottom:10px;">
                 <input type="text" id="redeemKpayName" placeholder="KPay Account Name">
                 <input type="text" id="redeemKpayNumber" placeholder="KPay Account Number">
@@ -1078,15 +1146,11 @@ HTML_PAGE = """<!DOCTYPE html>
         let mediaRecorder;
         let audioChunks = [];
         let localStream = null;
-        let peerConnections = {};
         let selectedFileBase64 = null;
         let selectedFileName = '';
         let isSpeakerMuted = false;
         let isCameraMuted = false;
         let wakeLock = null;
-        let activeDevicesCache = [];
-        let knownPrivateRooms = new Set();
-        let notificationTimeout = null;
         let pendingVerificationEmail = '';
         let currentUserProfileData = null;
 
@@ -1344,6 +1408,14 @@ HTML_PAGE = """<!DOCTYPE html>
             document.getElementById('floatingLiveChat').style.display = 'none';
         }
 
+        function closeBuyChat() {
+            document.getElementById('floatingPresentBuyChat').style.display = 'none';
+        }
+
+        function closeRedeemChat() {
+            document.getElementById('floatingPresentRedeemChat').style.display = 'none';
+        }
+
         function submitVerificationCode() {
             const code = document.getElementById('verificationCodeInput').value.trim();
             const devId = getDeviceId();
@@ -1386,6 +1458,38 @@ HTML_PAGE = """<!DOCTYPE html>
                 };
                 reader.readAsDataURL(inputElem.files[0]);
             }
+        }
+
+        function sendBuyChatText() {
+            const input = document.getElementById('buyChatInput');
+            const msg = input.value.trim();
+            if (!msg) return;
+            const container = document.getElementById('buyChatMessages');
+            container.innerHTML += `<div><b>You:</b> ${msg}</div>`;
+            input.value = '';
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function sendBuyChatImage(inputElem) {
+            if (inputElem.files && inputElem.files[0]) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const container = document.getElementById('buyChatMessages');
+                    container.innerHTML += `<div><b>You [Screenshot]:</b><br><img src="${e.target.result}" style="max-width:150px; border-radius:4px;"></div>`;
+                    container.scrollTop = container.scrollHeight;
+                };
+                reader.readAsDataURL(inputElem.files[0]);
+            }
+        }
+
+        function sendRedeemChatText() {
+            const input = document.getElementById('redeemChatInput');
+            const msg = input.value.trim();
+            if (!msg) return;
+            const container = document.getElementById('redeemChatMessages');
+            container.innerHTML += `<div><b>You:</b> ${msg}</div>`;
+            input.value = '';
+            container.scrollTop = container.scrollHeight;
         }
 
         function fetchAdminAllLists() {
@@ -1598,6 +1702,28 @@ HTML_PAGE = """<!DOCTYPE html>
             }
         }
 
+        function saveUsername() {
+            let username = document.getElementById('modalUsername').value.trim();
+            if (!username) return;
+            if (username.length > 15) {
+                document.getElementById('usernameWarning').innerText = "Username must be max 15 letters";
+                return;
+            }
+            fetch('/update_user_profile', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username})
+            }).then(res => res.json()).then(d => {
+                if (d.success) {
+                    document.getElementById('usernameWarning').innerText = "";
+                    alert("Username saved successfully.");
+                    fetchUserProfileData();
+                } else {
+                    document.getElementById('usernameWarning').innerText = d.error || "Error saving username";
+                }
+            });
+        }
+
         function saveAge() {
             let ageVal = parseInt(document.getElementById('modalAge').value);
             if (isNaN(ageVal) || ageVal < 18) {
@@ -1711,10 +1837,50 @@ HTML_PAGE = """<!DOCTYPE html>
         function closeGiftBuyModal() {
             document.getElementById('giftBuyModal').style.display = 'none';
         }
+
         function submitGiftPurchaseRequest() {
-            alert("Gift purchase request submitted.");
+            let rose = parseInt(document.getElementById('buyRoseQty').value) || 0;
+            let orchid = parseInt(document.getElementById('buyOrchidQty').value) || 0;
+            let jasmine = parseInt(document.getElementById('buyJasmineQty').value) || 0;
+
+            if (rose === 0 && orchid === 0 && jasmine === 0) {
+                alert("ကျေးဇူးပြု၍ လက်ဆောင်အရေအတွက် အနည်းဆုံးတစ်ခု ရွေးပါ။");
+                return;
+            }
+
+            let rosePrice = 1000, orchidPrice = 3000, jasminePrice = 5000;
+            let totalPrice = (rose * rosePrice) + (orchid * orchidPrice) + (jasmine * jasminePrice);
+
             closeGiftBuyModal();
+            const buyChat = document.getElementById('floatingPresentBuyChat');
+            buyChat.style.display = 'flex';
+            document.getElementById('buyChatEmailDisplay').innerText = `Gift Purchase Request`;
+            
+            let autoMsg = `admin ကို ဒီလက်ဆောင်တွေ အရေအတွက် ဒီလောက်ဝယ်ချင်ပါတယ် ပိုက်ဆံဒီလောက် ကျပါတယ် (Rose: ${rose}, Orchid: ${orchid}, Jasmine: ${jasmine}) - Total: ${totalPrice} Ks. admin ဆီ ငွေလွှဲစရာ အကောင့် ပို့ပေးပါ`;
+            document.getElementById('buyChatMessages').innerHTML = `<div><b>System:</b> ${autoMsg}</div>`;
+            
+            const isAdmin = localStorage.getItem('wma_is_admin') === 'true';
+            if (isAdmin) {
+                document.getElementById('adminSellButton').style.display = 'block';
+            } else {
+                document.getElementById('adminSellButton').style.display = 'none';
+            }
         }
+
+        function adminExecuteSell() {
+            let rose = parseInt(document.getElementById('buyRoseQty').value) || 0;
+            let orchid = parseInt(document.getElementById('buyOrchidQty').value) || 0;
+            let jasmine = parseInt(document.getElementById('buyJasmineQty').value) || 0;
+            let targetEmail = localStorage.getItem('wma_remember_email') || '';
+
+            socket.emit('admin_sell_presents', { email: targetEmail, rose, orchid, jasmine });
+        }
+
+        socket.on('presents_sold_success', function(data) {
+            alert("Presents successfully processed and added to profile!");
+            closeBuyChat();
+            fetchUserProfileData(() => { renderUserGiftsSummary(); });
+        });
 
         function openRedeemModal() {
             document.getElementById('redeemModal').style.display = 'block';
@@ -1722,9 +1888,41 @@ HTML_PAGE = """<!DOCTYPE html>
         function closeRedeemModal() {
             document.getElementById('redeemModal').style.display = 'none';
         }
+
         function submitRedeemRequest() {
-            alert("Redeem request submitted.");
+            let rose = parseInt(document.getElementById('redeemRoseQty').value) || 0;
+            let orchid = parseInt(document.getElementById('redeemOrchidQty').value) || 0;
+            let jasmine = parseInt(document.getElementById('redeemJasmineQty').value) || 0;
+            let kpayName = document.getElementById('redeemKpayName').value.trim();
+            let kpayNumber = document.getElementById('redeemKpayNumber').value.trim();
+
+            if (!kpayName || !kpayNumber) {
+                alert("KPay Name နှင့် Number ထည့်ပါ။");
+                return;
+            }
+
+            let roseVal = 1000 * 0.9, orchidVal = 3000 * 0.9, jasmineVal = 5000 * 0.9;
+            let totalVal = (rose * roseVal) + (orchid * orchidVal) + (jasmine * jasmineVal);
+
             closeRedeemModal();
+            const redeemChat = document.getElementById('floatingPresentRedeemChat');
+            redeemChat.style.display = 'flex';
+            document.getElementById('redeemChatEmailDisplay').innerText = `Redeem Request | KPay: ${kpayName} (${kpayNumber})`;
+            
+            let autoMsg = `Redeem Request (Rose: ${rose}, Orchid: ${orchid}, Jasmine: ${jasmine}) - Expected Payout: ${totalVal} Ks. KPay Name: ${kpayName}, Number: ${kpayNumber}`;
+            document.getElementById('redeemChatMessages').innerHTML = `<div><b>System:</b> ${autoMsg}</div>`;
+
+            const isAdmin = localStorage.getItem('wma_is_admin') === 'true';
+            if (isAdmin) {
+                document.getElementById('adminPermitRedeemButton').style.display = 'block';
+            } else {
+                document.getElementById('adminPermitRedeemButton').style.display = 'none';
+            }
+        }
+
+        function adminExecutePermitRedeem() {
+            alert("Redeem permitted by admin.");
+            closeRedeemChat();
         }
 
         function toggleRecordVoice() {
