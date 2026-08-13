@@ -439,6 +439,7 @@ def handle_admin_action(data):
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     if action == 'remove':
+        cursor.execute('SELECT google_account FROM devices WHERE device_id = ?', (dev_row := cursor.fetchone()) and dev_row[0] or '',) # Helper logic
         cursor.execute('SELECT google_account FROM devices WHERE device_id = ?', (dev_id,))
         dev_row = cursor.fetchone()
         if dev_row and dev_row[0]:
@@ -553,17 +554,21 @@ HTML_PAGE = """
         body::before {
             content: "";
             position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
+            bottom: 0; right: 2%;
+            width: 50%; height: 95%;
             background-image: var(--char-fg-image);
-            background-size: cover; background-position: center;
-            opacity: 0.35;
+            background-size: contain; 
+            background-position: bottom right;
+            background-repeat: no-repeat;
+            opacity: 0.95; 
             pointer-events: none;
-            z-index: 1;
+            z-index: 50; /* Brought to front to overlay panels without being blurred */
+            filter: drop-shadow(0px 0px 15px rgba(0,0,0,0.5));
             animation: animePulse 10s ease-in-out infinite alternate;
         }
         @keyframes animePulse {
-            0% { transform: scale(1); opacity: 0.3; }
-            100% { transform: scale(1.05); opacity: 0.45; }
+            0% { transform: scale(1) translateY(0); }
+            100% { transform: scale(1.02) translateY(-10px); }
         }
         .left-pane, .right-pane {
             position: relative;
