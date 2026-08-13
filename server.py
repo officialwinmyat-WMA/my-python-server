@@ -439,7 +439,6 @@ def handle_admin_action(data):
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
     if action == 'remove':
-        cursor.execute('SELECT google_account FROM devices WHERE device_id = ?', (dev_row := cursor.fetchone()) and dev_row[0] or '',) # Helper logic
         cursor.execute('SELECT google_account FROM devices WHERE device_id = ?', (dev_id,))
         dev_row = cursor.fetchone()
         if dev_row and dev_row[0]:
@@ -531,12 +530,12 @@ HTML_PAGE = """
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <style>
         :root {
-            --bg-color: #0f172a;
-            --panel-bg: rgba(20, 24, 33, 0.75);
+            --bg-color: #0b0f19;
+            --panel-bg: rgba(15, 23, 42, 0.45);
             --text-color: #f8fafc;
             --accent-color: #ec4899;
-            --chat-bg: rgba(10, 14, 23, 0.65);
-            --stream-bg: rgba(20, 24, 33, 0.65);
+            --chat-bg: rgba(10, 14, 23, 0.35);
+            --stream-bg: rgba(15, 23, 42, 0.45);
             --bg-image: url('https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=1920&q=80');
             --char-fg-image: url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80');
         }
@@ -550,20 +549,20 @@ HTML_PAGE = """
             display: flex; height: 100vh; overflow: hidden;
             position: relative;
         }
-        /* Background Anime Character Animation / Display Layer to fill black dark gaps */
+        /* CrystalDiskInfo Anime Style Background Character Layer (Placed cleanly in background behind panels) */
         body::before {
             content: "";
             position: fixed;
-            bottom: 0; right: 2%;
-            width: 50%; height: 95%;
+            bottom: 0; right: 0;
+            width: 100%; height: 100%;
             background-image: var(--char-fg-image);
             background-size: contain; 
             background-position: bottom right;
             background-repeat: no-repeat;
             opacity: 0.95; 
             pointer-events: none;
-            z-index: 50; /* Brought to front to overlay panels without being blurred */
-            filter: drop-shadow(0px 0px 15px rgba(0,0,0,0.5));
+            z-index: 1; /* Behind panels so it never covers buttons or blocks mouse clicks */
+            filter: drop-shadow(0px 0px 15px rgba(0,0,0,0.6));
             animation: animePulse 10s ease-in-out infinite alternate;
         }
         @keyframes animePulse {
@@ -574,21 +573,20 @@ HTML_PAGE = """
             position: relative;
             z-index: 2;
         }
-        /* Desktop Layout (50/50 split) */
+        /* Desktop Layout (50/50 split) - Low opacity & no backdrop blur to let anime character show sharply */
         .left-pane {
             width: 50%; height: 100vh; overflow-y: auto; padding: 15px; box-sizing: border-box;
-            background: var(--panel-bg); border-right: 3px solid var(--accent-color);
-            backdrop-filter: blur(8px);
+            background: var(--panel-bg); border-right: 2px solid rgba(236, 72, 153, 0.5);
             transition: all 0.3s ease;
         }
         .right-pane {
             width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 15px; box-sizing: border-box;
-            background: var(--stream-bg); backdrop-filter: blur(8px);
-            border-left: 3px solid var(--accent-color);
+            background: var(--stream-bg);
+            border-left: 2px solid rgba(236, 72, 153, 0.5);
             transition: all 0.3s ease;
         }
         
-        /* Mobile UI Layout: Live Chat Box အပေါ် 50%, ခလုတ်များနှင့် Control Panel အောက် 50% စုစုပေါင်း 100% */
+        /* Mobile UI Layout: Live Chat Box အပေါ် 50%, ခလုတ်များနှင့် Control Panel အောက် 50% */
         @media(max-width: 768px) {
             body { flex-direction: column; height: 100vh; overflow: hidden; }
             .right-pane { width: 100%; height: 50vh; order: 1; overflow-y: auto; }
@@ -596,14 +594,14 @@ HTML_PAGE = """
         }
 
         .card {
-            background: rgba(255,255,255,0.12); padding: 12px; border-radius: 10px; margin-bottom: 12px;
-            border: 2px solid var(--accent-color); backdrop-filter: blur(8px);
-            box-shadow: 0 0 15px color-mix(in srgb, var(--accent-color) 35%, transparent);
+            background: rgba(15, 23, 42, 0.45); padding: 12px; border-radius: 10px; margin-bottom: 12px;
+            border: 1.5px solid var(--accent-color);
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
             transition: all 0.3s ease;
         }
         input, textarea, select, button {
             width: 100%; padding: 8px; margin: 6px 0; border-radius: 6px;
-            border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.92);
+            border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.85);
             color: white; box-sizing: border-box; outline: none; transition: all 0.3s ease;
         }
         input:focus, textarea:focus, select:focus {
@@ -616,14 +614,14 @@ HTML_PAGE = """
         
         #historyStream {
             flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color);
-            border-radius: 10px; padding: 10px; box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 8px;
-            box-shadow: inset 0 0 15px color-mix(in srgb, var(--accent-color) 20%, transparent);
+            border-radius: 10px; padding: 10px; box-sizing: border-box; margin-top: 8px;
+            box-shadow: inset 0 0 15px rgba(0,0,0,0.4);
             -webkit-overflow-scrolling: touch;
         }
         .history-item {
-            padding: 10px; margin-bottom: 8px; background: rgba(255,255,255,0.12);
+            padding: 10px; margin-bottom: 8px; background: rgba(15, 23, 42, 0.65);
             border-left: 6px solid var(--accent-color); border-radius: 8px; font-size: 13px; word-break: break-all; position: relative;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3); transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4); transition: all 0.3s ease;
         }
         .msg-actions { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
         .msg-actions button { padding: 4px 10px; font-size: 11px; width: auto; margin: 0; border-radius: 4px; background: var(--accent-color); border: 1px solid #fff; }
@@ -685,7 +683,7 @@ HTML_PAGE = """
         #videoPopup {
             display: none; position: fixed; top: 10%; left: 15%; width: 70%;
             background: rgba(20, 24, 33, 0.98); border: 3px solid var(--accent-color); border-radius: 12px;
-            padding: 20px; z-index: 1000; box-shadow: 0 0 35px var(--accent-color); text-align: center; backdrop-filter: blur(18px);
+            padding: 20px; z-index: 1000; box-shadow: 0 0 35px var(--accent-color); text-align: center;
         }
         .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; max-height: 380px; overflow-y: auto; margin: 15px 0; }
         .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 8px; padding: 5px; }
@@ -703,12 +701,12 @@ HTML_PAGE = """
         .chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 2px solid var(--accent-color); display: block; }
         .admin-login-box { border-color: #f59e0b !important; }
 
-        /* Floating Live Chat Box Styles */
+        /* Floating Support Modal Popups (Fixed positioning overlay cleanly) */
         .floating-chat-box {
-            position: fixed; bottom: 20px; right: 20px; width: 320px; max-height: 400px;
-            background: rgba(15, 23, 42, 0.95); border: 3px solid var(--accent-color); border-radius: 12px;
-            z-index: 10000; display: flex; flex-direction: column; box-shadow: 0 0 25px var(--accent-color);
-            padding: 12px; box-sizing: border-box; backdrop-filter: blur(10px);
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 340px; max-height: 420px;
+            background: rgba(15, 23, 42, 0.98); border: 3px solid var(--accent-color); border-radius: 12px;
+            z-index: 10000; display: flex; flex-direction: column; box-shadow: 0 0 35px var(--accent-color);
+            padding: 12px; box-sizing: border-box;
         }
         .floating-chat-header {
             display: flex; justify-content: space-between; align-items: center; font-weight: bold;
@@ -724,7 +722,7 @@ HTML_PAGE = """
     </style>
 </head>
 <body>
-    <!-- Temporary Floating Live Chat Boxes System -->
+    <!-- Temporary Floating Support Chat Boxes System -->
     <div id="signUpChatBox" class="floating-chat-box" style="display:none;">
         <div class="floating-chat-header">
             <span>Sign-up Support Chat</span>
