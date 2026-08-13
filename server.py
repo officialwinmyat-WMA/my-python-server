@@ -563,31 +563,35 @@ HTML_PAGE = """
             position: relative;
             z-index: 2;
         }
+        /* Desktop Layout (50/50 split) */
         .left-pane {
-            width: 50%; height: 100vh; overflow-y: auto; padding: 20px; box-sizing: border-box;
+            width: 50%; height: 100vh; overflow-y: auto; padding: 15px; box-sizing: border-box;
             background: var(--panel-bg); border-right: 3px solid var(--accent-color);
             backdrop-filter: blur(12px);
             transition: all 0.3s ease;
         }
         .right-pane {
-            width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box;
+            width: 50%; height: 100vh; display: flex; flex-direction: column; padding: 15px; box-sizing: border-box;
             background: var(--stream-bg); backdrop-filter: blur(12px);
             border-left: 3px solid var(--accent-color);
             transition: all 0.3s ease;
         }
+        
+        /* Mobile UI Layout: Live Chat Box အပေါ် 50%, ခလုတ်များနှင့် Control Panel အောက် 50% စုစုပေါင်း 100% */
         @media(max-width: 768px) {
-            body { flex-direction: column; height: 100vh; overflow-y: auto; }
-            .right-pane { width: 100%; height: 50vh; order: 1; }
-            .left-pane { width: 100%; height: 50vh; order: 2; }
+            body { flex-direction: column; height: 100vh; overflow: hidden; }
+            .right-pane { width: 100%; height: 50vh; order: 1; overflow-y: auto; }
+            .left-pane { width: 100%; height: 50vh; order: 2; overflow-y: auto; }
         }
+
         .card {
-            background: rgba(255,255,255,0.08); padding: 15px; border-radius: 10px; margin-bottom: 15px;
+            background: rgba(255,255,255,0.08); padding: 12px; border-radius: 10px; margin-bottom: 12px;
             border: 2px solid var(--accent-color); backdrop-filter: blur(8px);
             box-shadow: 0 0 15px color-mix(in srgb, var(--accent-color) 35%, transparent);
             transition: all 0.3s ease;
         }
         input, textarea, select, button {
-            width: 100%; padding: 10px; margin: 8px 0; border-radius: 6px;
+            width: 100%; padding: 8px; margin: 6px 0; border-radius: 6px;
             border: 2px solid var(--accent-color); background: rgba(15, 23, 42, 0.92);
             color: white; box-sizing: border-box; outline: none; transition: all 0.3s ease;
         }
@@ -598,30 +602,48 @@ HTML_PAGE = """
             background: var(--accent-color); cursor: pointer; font-weight: bold; border: 2px solid #fff; transition: 0.2s;
         }
         button:hover { opacity: 0.9; transform: scale(1.02); box-shadow: 0 0 12px var(--accent-color); }
+        
         #historyStream {
             flex: 1; overflow-y: auto; background: var(--chat-bg); border: 2px solid var(--accent-color);
-            border-radius: 10px; padding: 12px; box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 10px;
+            border-radius: 10px; padding: 10px; box-sizing: border-box; backdrop-filter: blur(8px); margin-top: 8px;
             box-shadow: inset 0 0 15px color-mix(in srgb, var(--accent-color) 20%, transparent);
             -webkit-overflow-scrolling: touch;
         }
         .history-item {
-            padding: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.08);
+            padding: 10px; margin-bottom: 8px; background: rgba(255,255,255,0.08);
             border-left: 6px solid var(--accent-color); border-radius: 8px; font-size: 13px; word-break: break-all; position: relative;
             box-shadow: 0 2px 8px rgba(0,0,0,0.3); transition: all 0.3s ease;
         }
-        .msg-actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+        .msg-actions { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
         .msg-actions button { padding: 4px 10px; font-size: 11px; width: auto; margin: 0; border-radius: 4px; background: var(--accent-color); border: 1px solid #fff; }
         
+        /* User name & Profile Picture integration style */
+        .user-profile-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            vertical-align: middle;
+        }
+        .chat-user-avatar {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: 1px solid var(--accent-color);
+            object-fit: cover;
+            background: #334155;
+            display: inline-block;
+            vertical-align: middle;
+        }
         .user-name-tag { color: var(--accent-color); cursor: pointer; text-decoration: underline; font-weight: bold; position: relative; display: inline-block; }
         .user-name-tag:hover { color: #fff; }
         
         .online-dot {
             display: inline-block;
-            width: 9px;
-            height: 9px;
+            width: 8px;
+            height: 8px;
             background-color: #22c55e;
             border-radius: 50%;
-            margin-left: 5px;
+            margin-left: 4px;
             box-shadow: 0 0 6px #22c55e;
             vertical-align: middle;
         }
@@ -647,7 +669,7 @@ HTML_PAGE = """
             padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; width: auto; border: 2px solid var(--accent-color); display: none;
         }
         #goToMainChatBtn {
-            display: none; margin-bottom: 10px; background: #2563eb; color: white; font-weight: bold; border: 2px solid #fff; padding: 8px; border-radius: 6px; cursor: pointer; text-align: center;
+            display: none; margin-bottom: 8px; background: #2563eb; color: white; font-weight: bold; border: 2px solid #fff; padding: 6px; border-radius: 6px; cursor: pointer; text-align: center;
         }
         #videoPopup {
             display: none; position: fixed; top: 10%; left: 15%; width: 70%;
@@ -658,7 +680,9 @@ HTML_PAGE = """
         .video-box { background: rgba(0,0,0,0.6); border: 2px solid var(--accent-color); border-radius: 8px; padding: 5px; }
         video { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; background: #000; }
         .device-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
-        #appContainer { display: none; width: 100%; height: 100vh; }
+        #appContainer { display: none; width: 100%; height: 100vh; flex-direction: row; }
+        @media(max-width: 768px) { #appContainer { flex-direction: column; } }
+
         #authOverlay, #verifyOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100vh;
             background: rgba(10, 14, 23, 0.96); z-index: 9999; display: flex; flex-direction: column;
@@ -812,16 +836,17 @@ HTML_PAGE = """
             </div>
         </div>
 
+        <!-- Right Pane: Live Chat Stream (Mobile မှာ အပေါ် 50%) -->
         <div class="right-pane" id="rightPane">
             <div id="topNotificationBanner"></div>
             <button id="resetBtn" onclick="resetStorage()">Reset Storage</button>
             
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
-                <h3 id="currentChatRoomTitle" style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color); margin: 0 0 10px 0;">WMA QQ - Main Group Chat</h3>
+                <h3 id="currentChatRoomTitle" style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color); margin: 0 0 8px 0;">WMA QQ - Main Group Chat</h3>
                 <button id="goToMainChatBtn" onclick="switchToMainChat()">Go to Main Chat Room</button>
             </div>
 
-            <div style="margin-bottom: 8px;">
+            <div style="margin-bottom: 6px;">
                 <select id="privateChatSwitcher" onchange="switchPrivateChatFromDropdown(this)" style="padding: 6px; font-size: 12px; margin: 0;">
                     <option value="main_group">💬 Switch Chat Rooms / Private List...</option>
                 </select>
@@ -830,24 +855,28 @@ HTML_PAGE = """
             <div id="historyStream"></div>
         </div>
 
+        <!-- Left Pane: Control Panel & Settings (Mobile မှာ အောက် 50%) -->
         <div class="left-pane">
-            <h2 style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color);">WMA QQ Control Panel</h2>
-            <div style="margin-bottom: 10px; font-size: 13px; color: #cbd5e1;">
-                Logged in as: <b id="currentLoggedInName" style="color:var(--accent-color);"></b> 
-                | သက်တမ်း: <span id="currentUserDurationDisplay" style="color:#facc15; font-weight:bold;">3 months</span>
-                <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button>
+            <h2 style="color: var(--accent-color); text-shadow: 0 0 8px var(--accent-color); margin-top:0;">WMA QQ Control Panel</h2>
+            <div style="margin-bottom: 8px; font-size: 13px; color: #cbd5e1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span class="user-profile-badge">
+                    <img id="myHeaderAvatarImg" class="chat-user-avatar" src="https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=120&q=80">
+                    <b id="currentLoggedInName" style="color:var(--accent-color);"></b>
+                </span>
+                <span>| သက်တမ်း: <span id="currentUserDurationDisplay" style="color:#facc15; font-weight:bold;">3 months</span></span>
+                <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: auto; background:#dc2626;">Logout</button>
             </div>
             
             <!-- User Profile & Interface Section -->
             <div class="card" style="border-color: #3b82f6;">
-                <h4 style="color: #3b82f6;">👤 User Profile & Settings</h4>
-                <div style="font-size:12px; margin-bottom:5px;">Username (Max 15 chars):</div>
+                <h4 style="color: #3b82f6; margin-top:0;">👤 User Profile & Settings</h4>
+                <div style="font-size:12px; margin-bottom:4px;">Username (Max 15 chars):</div>
                 <div style="display:flex; gap:5px;"><input type="text" id="profileUsernameInput" maxlength="15" placeholder="Username" style="margin:0;"><button onclick="saveProfileField('username')" style="width:auto; margin:0; padding:6px;">Save</button></div>
                 
-                <div style="font-size:12px; margin-top:8px; margin-bottom:5px;">Age (18-90 range, 18+ only):</div>
+                <div style="font-size:12px; margin-top:6px; margin-bottom:4px;">Age (18-90 range, 18+ only):</div>
                 <div style="display:flex; gap:5px;"><input type="number" id="profileAgeInput" min="18" max="90" placeholder="Age" style="margin:0;"><button onclick="saveProfileField('age')" style="width:auto; margin:0; padding:6px;">Save</button></div>
                 
-                <div style="font-size:12px; margin-top:8px; margin-bottom:5px;">Sex:</div>
+                <div style="font-size:12px; margin-top:6px; margin-bottom:4px;">Sex:</div>
                 <div style="display:flex; gap:5px;">
                     <select id="profileSexSelect" style="margin:0;" disabled>
                         <option value="">Save age first...</option>
@@ -855,69 +884,69 @@ HTML_PAGE = """
                     <button onclick="saveProfileField('sex')" style="width:auto; margin:0; padding:6px;">Save</button>
                 </div>
 
-                <div style="font-size:12px; margin-top:8px; margin-bottom:5px;">Location (Country > Province > City):</div>
-                <div style="display:flex; gap:5px; flex-direction:column;">
+                <div style="font-size:12px; margin-top:6px; margin-bottom:4px;">Location (Country > Province > City):</div>
+                <div style="display:flex; gap:4px; flex-direction:column;">
                     <input type="text" id="profileCountryInput" placeholder="Country" style="margin:2px 0;">
                     <input type="text" id="profileProvinceInput" placeholder="Province/State" style="margin:2px 0;">
                     <input type="text" id="profileCityInput" placeholder="City" style="margin:2px 0;">
-                    <button onclick="saveProfileField('location')" style="padding:6px;">Save Location</button>
+                    <button onclick="saveProfileField('location')" style="padding:6px; margin:2px 0;">Save Location</button>
                 </div>
 
-                <div style="font-size:12px; margin-top:10px; margin-bottom:5px;">Pictures (Max 10 photos, <15MB):</div>
+                <div style="font-size:12px; margin-top:8px; margin-bottom:4px;">Pictures (Max 10 photos, <15MB):</div>
                 <input type="file" id="profilePicInput" multiple onchange="handleProfilePictures(this)">
                 <div id="profilePicturesList" style="display:flex; gap:5px; flex-wrap:wrap; margin-top:5px;"></div>
             </div>
 
             <!-- Present Management Section -->
             <div class="card" style="border-color: #a855f7;">
-                <h4 style="color: #a855f7;">🎁 Present Management & Level</h4>
-                <div style="font-size:12px; margin-bottom:5px;">Inventory Status:</div>
+                <h4 style="color: #a855f7; margin-top:0;">🎁 Present Management & Level</h4>
+                <div style="font-size:12px; margin-bottom:4px;">Inventory Status:</div>
                 <div style="font-size:11px; color:#cbd5e1;" id="inventoryStatusDisplay">Purchased: 0 | Received: 0</div>
                 <div style="font-size:11px; color:#facc15; margin-top:3px;" id="userGradationDisplay">Level: Prince/Princess (0k)</div>
                 
-                <div style="margin-top:10px; display:flex; gap:5px;">
+                <div style="margin-top:8px; display:flex; gap:5px;">
                     <button onclick="triggerPresentBuyModal()" style="background:#16a34a; font-size:11px; padding:6px;">Buy Presents (Submit)</button>
                     <button onclick="triggerPresentRedeemModal()" style="background:#ca8a04; font-size:11px; padding:6px;">Redeem Presents (Submit)</button>
                 </div>
             </div>
 
             <div class="card" style="border-color: #22c55e;">
-                <h4 style="color: #22c55e;">🟢 Online Users List</h4>
-                <div id="onlineUsersListContainer" style="max-height: 120px; overflow-y: auto; font-size: 12px; color: #cbd5e1;"></div>
+                <h4 style="color: #22c55e; margin-top:0;">🟢 Online Users List</h4>
+                <div id="onlineUsersListContainer" style="max-height: 100px; overflow-y: auto; font-size: 12px; color: #cbd5e1;"></div>
             </div>
 
             <div class="card">
-                <h4 style="color: var(--accent-color);">Dynamic Anime Themes</h4>
+                <h4 style="color: var(--accent-color); margin-top:0;">Dynamic Anime Themes</h4>
                 <button onclick="autoGenerateAnimeTheme()">Randomize Anime Character Theme</button>
             </div>
 
             <div class="card" id="adminControlCard" style="display: none; border-color: #f59e0b;">
-                <h4 style="color: #f59e0b;">👑 Admin Control Panel (Recent 15 Mins Signups)</h4>
-                <div style="font-size: 11px; color: #cbd5e1; margin-bottom: 8px;">လတ်တလော ၁၅ မိနစ်အတွင်း sign up နှိပ်ထားသော user များ:</div>
-                <div id="adminRecentSignupsContainer" style="max-height: 240px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
+                <h4 style="color: #f59e0b; margin-top:0;">👑 Admin Control Panel (Recent 15 Mins Signups)</h4>
+                <div style="font-size: 11px; color: #cbd5e1; margin-bottom: 6px;">လတ်တလော ၁၅ မိနစ်အတွင်း sign up နှိပ်ထားသော user များ:</div>
+                <div id="adminRecentSignupsContainer" style="max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 6px; border: 1px solid var(--accent-color);"></div>
             </div>
 
             <div class="card">
-                <h4 style="color: var(--accent-color);">Function 1: Voice Message (Max 3s)</h4>
+                <h4 style="color: var(--accent-color); margin-top:0;">Function 1: Voice Message (Max 3s)</h4>
                 <button id="recBtn" onclick="toggleRecordVoice()">Record Voice (3s)</button>
-                <div id="voiceOptions" style="display:none; margin-top: 10px;">
+                <div id="voiceOptions" style="display:none; margin-top: 8px;">
                     <button onclick="sendVoice('48 Hours')" style="background: var(--accent-color);">Send Voice (48h Auto-Delete)</button>
                 </div>
             </div>
 
             <div class="card">
-                <h4 style="color: var(--accent-color);">Function 2: Video Call</h4>
+                <h4 style="color: var(--accent-color); margin-top:0;">Function 2: Video Call</h4>
                 <button onclick="triggerVideoCall()" style="background: #16a34a;">Call Active Users</button>
             </div>
 
             <div class="card">
-                <h4 style="color: var(--accent-color);">Function 3: Text & Universal Equation</h4>
-                <textarea id="textContent" rows="3" placeholder="Write text or equation (e.g. 50 * 20 =)" oninput="solveEquation(this)"></textarea>
+                <h4 style="color: var(--accent-color); margin-top:0;">Function 3: Text & Universal Equation</h4>
+                <textarea id="textContent" rows="2" placeholder="Write text or equation (e.g. 50 * 20 =)" oninput="solveEquation(this)"></textarea>
                 <button onclick="sendText()">Send Text (48h Auto-Delete)</button>
             </div>
 
             <div class="card">
-                <h4 style="color: var(--accent-color);">Function 4: Original File or Image (48h Auto-Delete)</h4>
+                <h4 style="color: var(--accent-color); margin-top:0;">Function 4: Original File or Image (48h Auto-Delete)</h4>
                 <input type="file" id="fileInput" onchange="handleFileSelected(this)">
                 <button id="sendFileBtn" onclick="sendFile()" disabled style="opacity: 0.5;">Send File / Image</button>
             </div>
@@ -1096,7 +1125,7 @@ HTML_PAGE = """
             document.getElementById(boxId).style.display = 'none';
         }
 
-        // Profile & Interface Fields Save Logic
+        // Profile & Interface Fields Save Logic with Avatar Support
         function saveProfileField(field) {
             const email = localStorage.getItem('wma_remember_email') || 'user';
             if (field === 'username') {
@@ -1104,6 +1133,7 @@ HTML_PAGE = """
                 if (val.length > 15) { alert("Max 15 characters allowed."); return; }
                 localStorage.setItem('wma_custom_username_' + email, val);
                 alert("Username saved successfully!");
+                document.getElementById('currentLoggedInName').innerText = getUserDisplayName(email, getDeviceId());
             } else if (field === 'age') {
                 const age = parseInt(document.getElementById('profileAgeInput').value);
                 if (isNaN(age) || age < 18 || age > 90) { alert("Age must be between 18 and 90 (18+ only disclaimer)."); return; }
@@ -1141,10 +1171,28 @@ HTML_PAGE = """
             container.innerHTML = '';
             Array.from(input.files).forEach((file, idx) => {
                 if (file.size > 15 * 1024 * 1024) { alert("Each photo must be <15 MB."); return; }
-                let div = document.createElement('div');
-                div.innerHTML = `<span style="font-size:10px;">Photo ${idx+1}</span> <button onclick="alert('Picture set as profile picture')" style="padding:2px; font-size:9px;">Set as PP</button>`;
-                container.appendChild(div);
+                let reader = new FileReader();
+                reader.onload = function(e) {
+                    let base64Img = e.target.result;
+                    let div = document.createElement('div');
+                    div.innerHTML = `<img src="${base64Img}" style="width:30px;height:30px;border-radius:50%;object-fit:cover;border:1px solid var(--accent-color);"> <button onclick="setAsProfilePicture('${base64Img}')" style="padding:2px; font-size:9px; width:auto;">Set as PP</button>`;
+                    container.appendChild(div);
+                };
+                reader.readAsDataURL(file);
             });
+        }
+
+        function setAsProfilePicture(base64Img) {
+            const email = localStorage.getItem('wma_remember_email') || 'user';
+            localStorage.setItem('wma_profile_avatar_' + email, base64Img);
+            document.getElementById('myHeaderAvatarImg').src = base64Img;
+            alert("Profile picture set successfully!");
+        }
+
+        function getUserAvatar(email) {
+            let savedAvatar = localStorage.getItem('wma_profile_avatar_' + email);
+            if (savedAvatar) return savedAvatar;
+            return 'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=120&q=80';
         }
 
         function loadUserProfileFromStorage() {
@@ -1162,6 +1210,8 @@ HTML_PAGE = """
                 let savedSex = localStorage.getItem('wma_profile_sex_' + email);
                 if (savedSex) sexSelect.value = savedSex;
             }
+            let avatarImg = getUserAvatar(email);
+            document.getElementById('myHeaderAvatarImg').src = avatarImg;
         }
 
         function switchAuthTab(tab) {
@@ -1519,10 +1569,14 @@ HTML_PAGE = """
             }
             onlineEmails.forEach(email => {
                 let displayName = getDisplayNameForEmail(email);
+                let avatarUrl = getUserAvatar(email);
                 let div = document.createElement('div');
                 div.style.padding = '4px 0';
+                div.style.display = 'flex';
+                div.style.alignItems = 'center';
+                div.style.gap = '6px';
                 div.style.borderBottom = '1px solid rgba(255,255,255,0.1)';
-                div.innerHTML = `<span class="online-dot"></span> <span class="user-name-tag" data-email="${email}" onclick="openPrivateChatWith('${email}')">${displayName}</span>`;
+                div.innerHTML = `<img src="${avatarUrl}" class="chat-user-avatar"> <span class="online-dot"></span> <span class="user-name-tag" data-email="${email}" onclick="openPrivateChatWith('${email}')">${displayName}</span>`;
                 container.appendChild(div);
             });
         }
@@ -1668,7 +1722,9 @@ HTML_PAGE = """
             const isOnline = found && (found.status === 'approved' || found.account === 'officialwinmyat@gmail.com');
             let dotHtml = isOnline ? `<span class="online-dot"></span>` : ``;
             let displayName = getDisplayNameForEmail(item.user);
-            let userHtml = `<span class="user-name-tag" data-email="${item.user}" onclick="openPrivateChatWith('${item.user}')">${displayName}${dotHtml}</span>`;
+            let avatarUrl = getUserAvatar(item.user);
+            
+            let userHtml = `<span class="user-profile-badge"><img src="${avatarUrl}" class="chat-user-avatar"><span class="user-name-tag" data-email="${item.user}" onclick="openPrivateChatWith('${item.user}')">${displayName}${dotHtml}</span></span>`;
             let contentHtml = '';
             
             if (item.type === 'text') {
@@ -1707,7 +1763,7 @@ HTML_PAGE = """
             if (triggerNotification && 'Notification' in window && Notification.permission === 'granted' && item.user.trim().toLowerCase() !== myEmail.toLowerCase()) {
                 new Notification(`WMA QQ - Message from ${displayName}`, {
                     body: item.type === 'text' ? item.content : `New ${item.type} received!`,
-                    icon: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=120&q=80'
+                    icon: avatarUrl
                 });
             }
         }
