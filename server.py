@@ -19,7 +19,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "wma_qq_secure_secret_key_123")
 from flask_socketio import SocketIO, emit
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
-# Master Key 852456 ကို ၄ နေရာခွဲမြှုပ်၍ လုံခြုံရေးနှင့် လိုင်စင် ခွင့်ပြုချက်အတွက် အသုံးပြုထားခြင်း[cite: 12]
+# Master Key 852456 ကို ၄ နေရာခွဲမြှုပ်၍ လုံခြုံရေးနှင့် လိုင်စင် ခွင့်ပြုချက်အတွက် အသုံးပြုထားခြင်း[cite: 1]
 MK_PART_1 = "852"
 MK_PART_2 = "456"
 LICENSE_CHECK_1 = "officialwinmyat"
@@ -2155,44 +2155,16 @@ HTML_PAGE = """<!DOCTYPE html>
 
         function logoutUser() {
             fetch('/logout', { method: 'POST' }).then(() => {
-                localStorage.removeItem('wma_remember_email');
                 localStorage.removeItem('wma_remember_token');
+                localStorage.removeItem('wma_remember_email');
                 localStorage.removeItem('wma_is_admin');
                 location.reload();
             });
         }
-
-        socket.on('broadcast_message', function(msg) {
-            if (msg.room === currentRoom) {
-                appendMessageToStream(msg);
-            }
-        });
-
-        socket.on('message_deleted', function(data) {
-            const elem = document.getElementById(`msg_item_${data.id}`);
-            if (elem) elem.remove();
-        });
-
-        socket.on('storage_reset', function() {
-            document.getElementById('historyStream').innerHTML = '';
-        });
-
-        socket.on('online_users_refresh', function() {
-            fetch('/get_devices')
-            .then(res => res.json())
-            .then(devices => {
-                const container = document.getElementById('onlineUsersListContainer');
-                if (!container) return;
-                container.innerHTML = '';
-                devices.forEach(d => {
-                    let div = document.createElement('div');
-                    div.style.padding = '4px 0';
-                    div.innerHTML = `<span>${d.account} (${d.device_id.substring(0,8)}...)</span> <span class="online-dot"></span>`;
-                    container.appendChild(div);
-                });
-            });
-        });
     </script>
 </body>
 </html>
 """
+
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
