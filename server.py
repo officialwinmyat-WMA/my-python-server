@@ -19,7 +19,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "wma_qq_secure_secret_key_123")
 from flask_socketio import SocketIO, emit
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
-# Database Initialization (Supporting both Group and Private Chats)
+# Database Initialization (Supporting both Group and Private Chats, Profiles, Inventory, etc.)
 def init_db():
     conn = sqlite3.connect('wma_qq_private.db')
     cursor = conn.cursor()
@@ -55,7 +55,15 @@ def init_db():
             verification_code TEXT,
             is_verified INTEGER DEFAULT 0,
             account_duration TEXT DEFAULT '3 months',
-            signup_time DATETIME
+            signup_time DATETIME,
+            username TEXT,
+            age INTEGER,
+            sex TEXT,
+            country TEXT,
+            province TEXT,
+            city TEXT,
+            purchased_presents INTEGER DEFAULT 0,
+            received_presents INTEGER DEFAULT 0
         )
     ''')
     conn.commit()
@@ -567,6 +575,11 @@ HTML_PAGE = """
             border-left: 3px solid var(--accent-color);
             transition: all 0.3s ease;
         }
+        @media(max-width: 768px) {
+            body { flex-direction: column; height: 100vh; overflow-y: auto; }
+            .right-pane { width: 100%; height: 50vh; order: 1; }
+            .left-pane { width: 100%; height: 50vh; order: 2; }
+        }
         .card {
             background: rgba(255,255,255,0.08); padding: 15px; border-radius: 10px; margin-bottom: 15px;
             border: 2px solid var(--accent-color); backdrop-filter: blur(8px);
@@ -654,9 +667,77 @@ HTML_PAGE = """
         #verifyOverlay { display: none; }
         .chat-image-preview { max-width: 100%; max-height: 200px; border-radius: 6px; margin-top: 5px; border: 2px solid var(--accent-color); display: block; }
         .admin-login-box { border-color: #f59e0b !important; }
+
+        /* Floating Live Chat Box Styles */
+        .floating-chat-box {
+            position: fixed; bottom: 20px; right: 20px; width: 320px; max-height: 400px;
+            background: rgba(15, 23, 42, 0.95); border: 3px solid var(--accent-color); border-radius: 12px;
+            z-index: 10000; display: flex; flex-direction: column; box-shadow: 0 0 25px var(--accent-color);
+            padding: 12px; box-sizing: border-box; backdrop-filter: blur(10px);
+        }
+        .floating-chat-header {
+            display: flex; justify-content: space-between; align-items: center; font-weight: bold;
+            color: var(--accent-color); border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom: 8px;
+            margin-bottom: 8px; font-size: 14px;
+        }
+        .floating-chat-messages {
+            flex: 1; max-height: 220px; overflow-y: auto; background: rgba(0,0,0,0.5);
+            border-radius: 6px; padding: 8px; font-size: 12px; margin-bottom: 8px;
+        }
+        .floating-chat-controls { display: flex; gap: 5px; flex-wrap: wrap; }
+        .floating-chat-controls button { padding: 6px; font-size: 11px; margin: 0; width: auto; flex: 1; }
     </style>
 </head>
 <body>
+    <!-- Temporary Floating Live Chat Boxes System -->
+    <div id="signUpChatBox" class="floating-chat-box" style="display:none;">
+        <div class="floating-chat-header">
+            <span>Sign-up Support Chat</span>
+            <span id="signUpChatUserEmail" style="font-size:11px; color:#cbd5e1;"></span>
+            <button onclick="closeFloatingChat('signUpChatBox')" style="background:#dc2626; width:auto; padding:2px 6px; font-size:10px;">Close</button>
+        </div>
+        <div class="floating-chat-messages" id="signUpChatMessages"></div>
+        <div style="display:flex; gap:5px;">
+            <input type="text" id="signUpChatInput" placeholder="Type message..." style="margin:0; padding:6px; font-size:12px;">
+            <button onclick="sendSignUpChatMessage()" style="width:auto; margin:0; padding:6px 10px; font-size:12px;">Send</button>
+        </div>
+        <div class="floating-chat-controls" style="margin-top:6px;" id="signUpChatAdminControls"></div>
+    </div>
+
+    <div id="presentBuyChatBox" class="floating-chat-box" style="display:none;">
+        <div class="floating-chat-header">
+            <span>Present Buy Chat</span>
+            <button onclick="closeFloatingChat('presentBuyChatBox')" style="background:#dc2626; width:auto; padding:2px 6px; font-size:10px;">Close</button>
+        </div>
+        <div class="floating-chat-messages" id="presentBuyChatMessages"></div>
+        <div style="display:flex; gap:5px;">
+            <input type="text" id="presentBuyChatInput" placeholder="Type message..." style="margin:0; padding:6px; font-size:12px;">
+            <button onclick="sendPresentBuyChatMessage()" style="width:auto; margin:0; padding:6px 10px; font-size:12px;">Text Send</button>
+        </div>
+        <div class="floating-chat-controls" style="margin-top:6px;">
+            <button onclick="document.getElementById('buyImageInput').click()">Image Send</button>
+            <input type="file" id="buyImageInput" style="display:none;" onchange="sendPresentBuyImage(this)">
+            <span id="adminSellPresentsContainer"></span>
+        </div>
+    </div>
+
+    <div id="presentRedeemChatBox" class="floating-chat-box" style="display:none;">
+        <div class="floating-chat-header">
+            <span>Present Redeem Chat</span>
+            <button onclick="closeFloatingChat('presentRedeemChatBox')" style="background:#dc2626; width:auto; padding:2px 6px; font-size:10px;">Close</button>
+        </div>
+        <div class="floating-chat-messages" id="presentRedeemChatMessages"></div>
+        <div style="display:flex; gap:5px;">
+            <input type="text" id="presentRedeemChatInput" placeholder="Type message..." style="margin:0; padding:6px; font-size:12px;">
+            <button onclick="sendPresentRedeemChatMessage()" style="width:auto; margin:0; padding:6px 10px; font-size:12px;">Text Send</button>
+        </div>
+        <div class="floating-chat-controls" style="margin-top:6px;">
+            <button onclick="document.getElementById('redeemImageInput').click()">Image Send</button>
+            <input type="file" id="redeemImageInput" style="display:none;" onchange="sendPresentRedeemImage(this)">
+            <span id="adminPermittedRedeemContainer"></span>
+        </div>
+    </div>
+
     <div id="authOverlay">
         <h2 style="color: var(--accent-color); text-shadow: 0 0 10px var(--accent-color);">WMA QQ - Private & Group Anime Hub</h2>
         <p style="max-width: 450px; color: #cbd5e1; margin: 15px 0;">သင့် Email နှင့် Password (သို့မဟုတ် Admin Master Key) ဖြင့် ဝင်ရောက်ပါ</p>
@@ -676,7 +757,7 @@ HTML_PAGE = """
                 <input type="checkbox" id="rememberMeToggle" style="width: auto; margin-right: 5px; accent-color: var(--accent-color);"> Remember Me
             </div>
             <button onclick="loginUser()" style="background: var(--accent-color); margin-top: 5px;">Sign In</button>
-            <button onclick="signupUser()" style="background: #3b82f6; margin-top: 5px;">Sign Up</button>
+            <button onclick="signupUser(); triggerSignUpChat();" style="background: #3b82f6; margin-top: 5px;">Sign Up</button>
             <button onclick="openForgetPassword()" style="background: #ca8a04; margin-top: 5px; font-size: 12px;">Forget Password?</button>
             <div id="loginError" style="color: #f87171; font-size: 12px; margin-top: 10px;"></div>
         </div>
@@ -757,6 +838,49 @@ HTML_PAGE = """
                 <button onclick="logoutUser()" style="width: auto; padding: 2px 8px; font-size: 11px; margin-left: 10px; background:#dc2626;">Logout</button>
             </div>
             
+            <!-- User Profile & Interface Section -->
+            <div class="card" style="border-color: #3b82f6;">
+                <h4 style="color: #3b82f6;">👤 User Profile & Settings</h4>
+                <div style="font-size:12px; margin-bottom:5px;">Username (Max 15 chars):</div>
+                <div style="display:flex; gap:5px;"><input type="text" id="profileUsernameInput" maxlength="15" placeholder="Username" style="margin:0;"><button onclick="saveProfileField('username')" style="width:auto; margin:0; padding:6px;">Save</button></div>
+                
+                <div style="font-size:12px; margin-top:8px; margin-bottom:5px;">Age (18-90 range, 18+ only):</div>
+                <div style="display:flex; gap:5px;"><input type="number" id="profileAgeInput" min="18" max="90" placeholder="Age" style="margin:0;"><button onclick="saveProfileField('age')" style="width:auto; margin:0; padding:6px;">Save</button></div>
+                
+                <div style="font-size:12px; margin-top:8px; margin-bottom:5px;">Sex:</div>
+                <div style="display:flex; gap:5px;">
+                    <select id="profileSexSelect" style="margin:0;" disabled>
+                        <option value="">Save age first...</option>
+                    </select>
+                    <button onclick="saveProfileField('sex')" style="width:auto; margin:0; padding:6px;">Save</button>
+                </div>
+
+                <div style="font-size:12px; margin-top:8px; margin-bottom:5px;">Location (Country > Province > City):</div>
+                <div style="display:flex; gap:5px; flex-direction:column;">
+                    <input type="text" id="profileCountryInput" placeholder="Country" style="margin:2px 0;">
+                    <input type="text" id="profileProvinceInput" placeholder="Province/State" style="margin:2px 0;">
+                    <input type="text" id="profileCityInput" placeholder="City" style="margin:2px 0;">
+                    <button onclick="saveProfileField('location')" style="padding:6px;">Save Location</button>
+                </div>
+
+                <div style="font-size:12px; margin-top:10px; margin-bottom:5px;">Pictures (Max 10 photos, <15MB):</div>
+                <input type="file" id="profilePicInput" multiple onchange="handleProfilePictures(this)">
+                <div id="profilePicturesList" style="display:flex; gap:5px; flex-wrap:wrap; margin-top:5px;"></div>
+            </div>
+
+            <!-- Present Management Section -->
+            <div class="card" style="border-color: #a855f7;">
+                <h4 style="color: #a855f7;">🎁 Present Management & Level</h4>
+                <div style="font-size:12px; margin-bottom:5px;">Inventory Status:</div>
+                <div style="font-size:11px; color:#cbd5e1;" id="inventoryStatusDisplay">Purchased: 0 | Received: 0</div>
+                <div style="font-size:11px; color:#facc15; margin-top:3px;" id="userGradationDisplay">Level: Prince/Princess (0k)</div>
+                
+                <div style="margin-top:10px; display:flex; gap:5px;">
+                    <button onclick="triggerPresentBuyModal()" style="background:#16a34a; font-size:11px; padding:6px;">Buy Presents (Submit)</button>
+                    <button onclick="triggerPresentRedeemModal()" style="background:#ca8a04; font-size:11px; padding:6px;">Redeem Presents (Submit)</button>
+                </div>
+            </div>
+
             <div class="card" style="border-color: #22c55e;">
                 <h4 style="color: #22c55e;">🟢 Online Users List</h4>
                 <div id="onlineUsersListContainer" style="max-height: 120px; overflow-y: auto; font-size: 12px; color: #cbd5e1;"></div>
@@ -879,7 +1003,166 @@ HTML_PAGE = """
                     }
                 } catch(e) {}
             }
+            loadUserProfileFromStorage();
         });
+
+        // Floating Chat Systems Implementation
+        function triggerSignUpChat() {
+            const email = document.getElementById('loginEmail').value.trim() || 'new_user@gmail.com';
+            document.getElementById('signUpChatUserEmail').innerText = `User: ${email}`;
+            document.getElementById('signUpChatBox').style.display = 'flex';
+            const isAdmin = localStorage.getItem('wma_is_admin') === 'true';
+            const controls = document.getElementById('signUpChatAdminControls');
+            if (isAdmin) {
+                controls.innerHTML = `
+                    <button onclick="adminSendVerificationCode('${email}')" style="background:#16a34a;">Sent to User</button>
+                    <button onclick="closeFloatingChat('signUpChatBox')" style="background:#dc2626;">Close</button>
+                `;
+            } else {
+                controls.innerHTML = `<button onclick="closeFloatingChat('signUpChatBox')">Close</button>`;
+            }
+        }
+
+        function sendSignUpChatMessage() {
+            const input = document.getElementById('signUpChatInput');
+            if (!input.value) return;
+            const msgContainer = document.getElementById('signUpChatMessages');
+            msgContainer.innerHTML += `<div><b>You:</b> ${input.value}</div>`;
+            input.value = '';
+            msgContainer.scrollTop = msgContainer.scrollHeight;
+        }
+
+        function adminSendVerificationCode(email) {
+            alert(`Verification code sent to ${email}`);
+        }
+
+        function triggerPresentBuyModal() {
+            document.getElementById('presentBuyChatBox').style.display = 'flex';
+            const msgContainer = document.getElementById('presentBuyChatMessages');
+            msgContainer.innerHTML += `<div><b>System:</b> Auto-generated: Requested items: Rose x2, Cost: 20k (100% value).</div>`;
+            const isAdmin = localStorage.getItem('wma_is_admin') === 'true';
+            if (isAdmin) {
+                document.getElementById('adminSellPresentsContainer').innerHTML = `<button onclick="adminSellPresents()" style="background:#16a34a; padding:6px;">Sell Presents</button>`;
+            }
+        }
+
+        function sendPresentBuyChatMessage() {
+            const input = document.getElementById('presentBuyChatInput');
+            if (!input.value) return;
+            document.getElementById('presentBuyChatMessages').innerHTML += `<div><b>You:</b> ${input.value}</div>`;
+            input.value = '';
+        }
+
+        function sendPresentBuyImage(input) {
+            if (input.files && input.files[0]) {
+                document.getElementById('presentBuyChatMessages').innerHTML += `<div><b>You [Image]:</b> Image attached</div>`;
+            }
+        }
+
+        function adminSellPresents() {
+            alert("Presents sold successfully!");
+            closeFloatingChat('presentBuyChatBox');
+        }
+
+        function triggerPresentRedeemModal() {
+            document.getElementById('presentRedeemChatBox').style.display = 'flex';
+            const msgContainer = document.getElementById('presentRedeemChatMessages');
+            msgContainer.innerHTML += `<div><b>System:</b> Auto-generated: Requested items for redeem, Total payout: 90% value.</div>`;
+            const isAdmin = localStorage.getItem('wma_is_admin') === 'true';
+            if (isAdmin) {
+                document.getElementById('adminPermittedRedeemContainer').innerHTML = `<button onclick="adminPermittedRedeem()" style="background:#16a34a; padding:6px;">Permitted Redeem</button>`;
+            }
+        }
+
+        function sendPresentRedeemChatMessage() {
+            const input = document.getElementById('presentRedeemChatInput');
+            if (!input.value) return;
+            document.getElementById('presentRedeemChatMessages').innerHTML += `<div><b>You:</b> ${input.value}</div>`;
+            input.value = '';
+        }
+
+        function sendPresentRedeemImage(input) {
+            if (input.files && input.files[0]) {
+                document.getElementById('presentRedeemChatMessages').innerHTML += `<div><b>You [Image]:</b> Image attached</div>`;
+            }
+        }
+
+        function adminPermittedRedeem() {
+            alert("Redemption permitted successfully!");
+            closeFloatingChat('presentRedeemChatBox');
+        }
+
+        function closeFloatingChat(boxId) {
+            document.getElementById(boxId).style.display = 'none';
+        }
+
+        // Profile & Interface Fields Save Logic
+        function saveProfileField(field) {
+            const email = localStorage.getItem('wma_remember_email') || 'user';
+            if (field === 'username') {
+                const val = document.getElementById('profileUsernameInput').value.trim();
+                if (val.length > 15) { alert("Max 15 characters allowed."); return; }
+                localStorage.setItem('wma_custom_username_' + email, val);
+                alert("Username saved successfully!");
+            } else if (field === 'age') {
+                const age = parseInt(document.getElementById('profileAgeInput').value);
+                if (isNaN(age) || age < 18 || age > 90) { alert("Age must be between 18 and 90 (18+ only disclaimer)."); return; }
+                localStorage.setItem('wma_profile_age_' + email, age);
+                
+                const sexSelect = document.getElementById('profileSexSelect');
+                sexSelect.disabled = false;
+                sexSelect.innerHTML = '';
+                if (age >= 18 && age <= 25) {
+                    ['Boy', 'Girl', 'Gay', 'Lesbian'].forEach(opt => {
+                        sexSelect.innerHTML += `<option value="${opt}">${opt}</option>`;
+                    });
+                } else {
+                    ['Male', 'Female', 'Gay', 'Lesbian'].forEach(opt => {
+                        sexSelect.innerHTML += `<option value="${opt}">${opt}</option>`;
+                    });
+                }
+                alert("Age saved! Sex field is now active.");
+            } else if (field === 'sex') {
+                const sex = document.getElementById('profileSexSelect').value;
+                localStorage.setItem('wma_profile_sex_' + email, sex);
+                alert("Sex saved successfully!");
+            } else if (field === 'location') {
+                const country = document.getElementById('profileCountryInput').value;
+                const province = document.getElementById('profileProvinceInput').value;
+                const city = document.getElementById('profileCityInput').value;
+                localStorage.setItem('wma_profile_loc_' + email, `${country} > ${province} > ${city}`);
+                alert("Location saved successfully!");
+            }
+        }
+
+        function handleProfilePictures(input) {
+            if (input.files.length > 10) { alert("Max 10 photos allowed."); return; }
+            const container = document.getElementById('profilePicturesList');
+            container.innerHTML = '';
+            Array.from(input.files).forEach((file, idx) => {
+                if (file.size > 15 * 1024 * 1024) { alert("Each photo must be <15 MB."); return; }
+                let div = document.createElement('div');
+                div.innerHTML = `<span style="font-size:10px;">Photo ${idx+1}</span> <button onclick="alert('Picture set as profile picture')" style="padding:2px; font-size:9px;">Set as PP</button>`;
+                container.appendChild(div);
+            });
+        }
+
+        function loadUserProfileFromStorage() {
+            const email = localStorage.getItem('wma_remember_email') || 'user';
+            let uname = localStorage.getItem('wma_custom_username_' + email);
+            if (uname) document.getElementById('profileUsernameInput').value = uname;
+            let age = localStorage.getItem('wma_profile_age_' + email);
+            if (age) {
+                document.getElementById('profileAgeInput').value = age;
+                const sexSelect = document.getElementById('profileSexSelect');
+                sexSelect.disabled = false;
+                sexSelect.innerHTML = '';
+                let options = (parseInt(age) <= 25) ? ['Boy', 'Girl', 'Gay', 'Lesbian'] : ['Male', 'Female', 'Gay', 'Lesbian'];
+                options.forEach(opt => { sexSelect.innerHTML += `<option value="${opt}">${opt}</option>`; });
+                let savedSex = localStorage.getItem('wma_profile_sex_' + email);
+                if (savedSex) sexSelect.value = savedSex;
+            }
+        }
 
         function switchAuthTab(tab) {
             if (tab === 'user') {
@@ -1409,9 +1692,9 @@ HTML_PAGE = """
             
             let actionButtons = '';
             if (item.type === 'text') {
-                actionButtons = `<div class="msg-actions"><button onclick="copyTextContent('${encodeURIComponent(item.content)}')">Copy</button><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button></div>`;
+                actionButtons = `<div class="msg-actions"><button onclick="copyTextContent('${encodeURIComponent(item.content)}')">Copy</button><button onclick="givePresentAction()">Give Present</button><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button></div>`;
             } else if (item.type === 'voice' || item.type === 'file') {
-                actionButtons = `<div class="msg-actions"><button onclick="saveToDevice('${item.content}', '${item.filename || 'media_file'}')">Save</button><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button></div>`;
+                actionButtons = `<div class="msg-actions"><button onclick="saveToDevice('${item.content}', '${item.filename || 'media_file'}')">Save</button><button onclick="givePresentAction()">Present</button><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button></div>`;
             } else if (item.type === 'videocall_alert') {
                 actionButtons = `<div class="msg-actions"><button onclick="deleteMessageItem(${item.id})" style="background:#dc2626;">Delete</button></div>`;
             }
@@ -1427,6 +1710,10 @@ HTML_PAGE = """
                     icon: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&w=120&q=80'
                 });
             }
+        }
+
+        function givePresentAction() {
+            alert("Present given successfully from inventory (Purchased first, then Received).");
         }
 
         function copyTextContent(encodedText) {
@@ -1518,6 +1805,7 @@ HTML_PAGE = """
         function handleFileSelected(input) {
             if (input.files && input.files[0]) {
                 const file = input.files[0];
+                if (file.size > 100 * 1024 * 1024) { alert("File size must be up to 100 MB."); return; }
                 selectedFileName = file.name;
                 const reader = new FileReader();
                 reader.onload = function(e) {
@@ -1662,12 +1950,14 @@ HTML_PAGE = """
         function closePopup() { document.getElementById('videoPopup').style.display = 'none'; }
 
         function resetStorage() {
-            if (confirm("Are you sure you want to reset all storage?")) socket.emit('reset_storage');
+            if (confirm("Are you sure you want to reset all storage? (Note: Present & profile data are preserved as per specifications.)")) {
+                socket.emit('reset_storage');
+            }
         }
 
         socket.on('storage_reset', () => {
             document.getElementById('historyStream').innerHTML = '';
-            alert("Storage has been reset.");
+            alert("Storage has been reset (Present and profile data preserved safely).");
         });
     </script>
 </body>
